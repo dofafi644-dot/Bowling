@@ -1,0 +1,1489 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ボーリング演出システム</title>
+<style>
+  :root{
+    --bg:#0e0d12;
+    --tile:#1d2230;
+    --tile-edge:#0a0d14;
+    --white:#ffffff;
+    --gold:#ffd24a;
+    --red:#e23b34;
+    --rainbow:conic-gradient(from 0deg,
+      #ff2d78, #ff9f1c, #ffe74c, #4ade80, #22d3ee, #818cf8, #ff2d78);
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; min-height:100%;
+    background:var(--bg);
+    font-family:"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    color:var(--white);
+  }
+  body{
+    display:flex; flex-direction:column;
+    min-height:100vh; min-height:100dvh;
+    position:relative;
+    overflow-y:auto;
+    overflow-x:hidden;
+  }
+
+  /* ===== 背景(控えめに。UIの邪魔をしない) ===== */
+  .bg-rays{
+    position:fixed; inset:-50%;
+    z-index:0;
+    pointer-events:none;
+    background:var(--rainbow);
+    opacity:0.07;
+    filter:blur(40px);
+    animation:raySpin 50s linear infinite;
+  }
+  @keyframes raySpin{
+    from{ transform:rotate(0deg); }
+    to{ transform:rotate(360deg); }
+  }
+  /* 背景の上に暗い膜を敷いて、UIのコントラストを確保 */
+  .bg-dim{
+    position:fixed; inset:0;
+    z-index:0;
+    pointer-events:none;
+    background:radial-gradient(ellipse at center, rgba(14,13,18,0.55) 0%, rgba(14,13,18,0.85) 70%);
+  }
+
+  header, .cam-wrap, main, .overlay{ position:relative; z-index:1; }
+
+  /* ===== Header ===== */
+  header{
+    padding:1rem 1.5rem 0.6rem;
+    text-align:center;
+    flex-shrink:0;
+  }
+  header h1{
+    margin:0;
+    font-size:clamp(1.3rem, 3vw, 2rem);
+    letter-spacing:0.06em;
+    font-weight:800;
+    color:var(--white);
+  }
+  header p{
+    margin:0.4rem 0 0;
+    font-size:clamp(0.85rem, 1.6vw, 1.05rem);
+    color:var(--white);
+    opacity:0.75;
+  }
+
+  /* ===== Camera panel ===== */
+  .cam-wrap{
+    flex-shrink:0;
+    padding:0 1.5rem;
+  }
+  .scoreboard{
+    display:flex;
+    gap:0.7rem;
+    justify-content:center;
+    flex-wrap:wrap;
+    max-width:900px;
+    margin:0 auto 0.9rem;
+  }
+  .frame-box{
+    background:var(--tile);
+    border:3px solid rgba(255,255,255,0.55);
+    border-radius:12px;
+    padding:0.6rem 0.9rem 0.7rem;
+    min-width:5.4rem;
+    text-align:center;
+    transition:border-color 0.2s ease, box-shadow 0.2s ease;
+    box-shadow:0 4px 10px rgba(0,0,0,0.5);
+  }
+  .frame-box.current{
+    border-color:var(--gold);
+    box-shadow:0 0 0 3px rgba(255,210,74,0.5), 0 4px 10px rgba(0,0,0,0.5);
+  }
+  .frame-box.total-box{
+    border-color:#4ade80;
+  }
+  .frame-label{
+    font-size:0.8rem;
+    font-weight:900;
+    opacity:1;
+    letter-spacing:0.05em;
+    margin-bottom:0.32rem;
+    white-space:nowrap;
+    color:#fff;
+  }
+  .frame-throws{
+    display:flex;
+    gap:0.26rem;
+    justify-content:center;
+    margin-bottom:0.4rem;
+  }
+  .throw-cell{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:1.8rem; height:1.8rem;
+    border:2px solid rgba(255,255,255,0.5);
+    border-radius:6px;
+    font-size:1rem;
+    font-weight:900;
+    background:rgba(0,0,0,0.4);
+    color:#fff;
+  }
+  .throw-cell.filled{
+    border-color:var(--gold);
+    color:var(--gold);
+    background:rgba(255,210,74,0.18);
+  }
+  .frame-score{
+    font-size:1.3rem;
+    font-weight:900;
+    color:var(--gold);
+  }
+  .frame-score.big{ font-size:1.6rem; color:#4ade80; }
+  .camera-panel{
+    position:relative;
+    width:100%;
+    max-width:900px;
+    margin:0 auto;
+    aspect-ratio:4/3;
+    max-height:66vh;
+    border-radius:14px;
+    overflow:hidden;
+    background:#000;
+    border:2px solid rgba(255,255,255,0.18);
+    box-shadow:0 6px 18px rgba(0,0,0,0.55);
+  }
+  #camFeed{
+    width:100%; height:100%;
+    object-fit:cover;
+    display:none;
+    background:#000;
+  }
+  .cam-placeholder{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:0.6rem;
+    background:rgba(255,255,255,0.03);
+  }
+  .cam-placeholder.hide{ display:none; }
+  .cam-ph-icon{ font-size:2.2rem; opacity:0.6; }
+  #camPlaceholderText{ font-size:0.95rem; opacity:0.75; text-align:center; padding:0 1rem; }
+  .cam-start-btn{
+    padding:0.6rem 1.4rem;
+    font-size:1rem;
+    font-weight:800;
+    border-radius:10px;
+    background:var(--gold);
+    color:#1a1400;
+    border:3px solid #fff;
+    cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .cam-total-badge{
+    position:absolute; top:0.5rem; left:0.5rem;
+    background:rgba(0,0,0,0.55);
+    border:2px solid var(--gold);
+    border-radius:10px;
+    padding:0.2rem 0.8rem;
+    font-size:clamp(1.2rem, 2.6vw, 1.9rem);
+    font-weight:900;
+    color:var(--gold);
+    line-height:1.3;
+    pointer-events:none;
+  }
+  .cam-total-badge .u{ font-size:0.5em; margin-left:0.15em; opacity:0.85; }
+  .cam-detect-badge{
+    position:absolute; bottom:0.5rem; left:0.5rem;
+    background:rgba(0,0,0,0.6);
+    border:2px solid #4ade80;
+    border-radius:10px;
+    padding:0.2rem 0.8rem;
+    font-size:clamp(1rem, 2.2vw, 1.5rem);
+    font-weight:900;
+    color:#4ade80;
+    pointer-events:none;
+  }
+  .cam-detect-badge .u{ font-size:0.5em; margin-left:0.15em; opacity:0.85; }
+  .cam-detect-badge.hide{ display:none; }
+  .cam-icon-btn{
+    position:absolute;
+    width:2.3rem; height:2.3rem;
+    border-radius:50%;
+    background:rgba(0,0,0,0.55);
+    border:2px solid rgba(255,255,255,0.45);
+    color:#fff;
+    font-size:1.1rem;
+    cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #camSettingsBtn{ top:0.5rem; right:0.5rem; }
+  #camResetBtn{
+    top:0.5rem; right:3.1rem;
+    width:auto; border-radius:8px;
+    padding:0 0.7rem; font-size:0.8rem; font-weight:800;
+  }
+
+  /* ===== Board / number grid ===== */
+  main{
+    flex:1;
+    display:flex;
+    align-items:stretch;
+    justify-content:center;
+    padding:0.8rem 1.5rem 2rem;
+  }
+  .board{
+    width:100%;
+    max-width:900px;
+    margin:0 auto;
+    display:grid;
+    grid-template-columns:repeat(4, 1fr);
+    grid-auto-rows:minmax(100px, 1fr);
+    gap:clamp(0.7rem, 1.8vw, 1.2rem);
+  }
+  @media (max-width:520px){
+    .board{ grid-template-columns:repeat(3, 1fr); }
+  }
+  .board.hide{ display:none; }
+
+  .game-over-panel{
+    display:none;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:1.2rem;
+    width:100%;
+    max-width:900px;
+    margin:0 auto;
+    padding:2.5rem 1.5rem;
+  }
+  .game-over-panel.show{ display:flex; }
+  .go-title{
+    font-size:clamp(1.6rem, 4vw, 2.4rem);
+    font-weight:900;
+    color:var(--gold);
+  }
+  .go-total{
+    font-size:clamp(1.2rem, 3vw, 1.7rem);
+    font-weight:800;
+  }
+  .go-total span{ color:#4ade80; font-size:1.3em; }
+
+  /* ===== Frame result overlay ===== */
+  #frameResultOverlay .fr-title{
+    font-size:clamp(1.3rem, 3vw, 1.8rem);
+    font-weight:900;
+    color:var(--gold);
+    margin-bottom:0.8rem;
+  }
+  #frameResultOverlay .fr-score{
+    font-size:clamp(1.6rem, 4.5vw, 2.6rem);
+    font-weight:900;
+    margin-bottom:2rem;
+  }
+  #frameResultOverlay .fr-score span{ color:#4ade80; }
+  #frameResultOverlay .fr-pending{
+    font-size:clamp(1rem, 2.4vw, 1.3rem);
+    opacity:0.85;
+    margin-bottom:2rem;
+    max-width:26rem;
+    text-align:center;
+  }
+
+  .pin-btn{
+    position:relative;
+    min-height:100px;
+    border:3px solid rgba(255,255,255,0.28);
+    border-radius:16px;
+    background:linear-gradient(180deg, #252c3d 0%, var(--tile) 55%, var(--tile-edge) 100%);
+    color:var(--white);
+    font-size:clamp(1.6rem, 4.5vw, 2.9rem);
+    font-weight:900;
+    cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    line-height:1;
+    overflow:hidden;
+    transition:transform 0.08s ease, border-color 0.15s ease;
+    -webkit-tap-highlight-color:transparent;
+    text-shadow:0 2px 4px rgba(0,0,0,0.9);
+    box-shadow:0 4px 0 #070a10, 0 6px 16px rgba(0,0,0,0.6);
+  }
+  .pin-btn:hover{ border-color:rgba(255,255,255,0.55); }
+  .pin-btn:active{
+    transform:translateY(3px) scale(0.95);
+    box-shadow:0 1px 0 #070a10, 0 3px 10px rgba(0,0,0,0.6);
+  }
+  .pin-btn:focus-visible{
+    outline:4px solid var(--gold);
+    outline-offset:3px;
+  }
+  .pin-btn .label{
+    position:static;
+    margin-top:0.25rem;
+    line-height:1;
+    font-size:clamp(0.95rem, 2.3vw, 1.35rem);
+    font-weight:800;
+    letter-spacing:0.06em;
+    color:var(--gold);
+    text-shadow:0 1px 3px rgba(0,0,0,0.9);
+  }
+  .pin-btn.strike{
+    background:linear-gradient(180deg, #f05149 0%, var(--red) 55%, #8f211c 100%);
+    border-color:rgba(255,255,255,0.45);
+    box-shadow:0 4px 0 #5e1512, 0 6px 16px rgba(0,0,0,0.6);
+  }
+  .pin-btn.strike:active{
+    box-shadow:0 1px 0 #5e1512, 0 3px 10px rgba(0,0,0,0.6);
+  }
+  .pin-btn.spare{
+    background:linear-gradient(180deg, #ffe58a 0%, var(--gold) 55%, #8a6a10 100%);
+    border-color:rgba(255,255,255,0.45);
+    color:#1a1400;
+    text-shadow:none;
+    box-shadow:0 4px 0 #5c4708, 0 6px 16px rgba(0,0,0,0.6);
+  }
+  .pin-btn.spare .label{ color:#1a1400; text-shadow:none; }
+  .pin-btn.spare:active{
+    box-shadow:0 1px 0 #5c4708, 0 3px 10px rgba(0,0,0,0.6);
+  }
+
+  /* タップ時の光(数字にはかからない、外向きのリングだけ) */
+  .pin-btn .tap-ring{
+    position:absolute;
+    inset:0;
+    border-radius:16px;
+    box-shadow:0 0 0 0 rgba(255,255,255,0.9);
+    opacity:0;
+    pointer-events:none;
+  }
+  .pin-btn.flash .tap-ring{ animation:ringBurst 0.5s ease-out; }
+  @keyframes ringBurst{
+    0%{ box-shadow:0 0 0 0 rgba(255,255,255,0.9); opacity:1; }
+    100%{ box-shadow:0 0 0 24px rgba(255,255,255,0); opacity:0; }
+  }
+  .pin-btn.flash{ animation:punch 0.22s ease-out; }
+  @keyframes punch{
+    0%{ transform:scale(1); }
+    35%{ transform:scale(1.1); }
+    100%{ transform:scale(1); }
+  }
+
+  /* ===== Overlays ===== */
+  .overlay{
+    position:fixed; inset:0;
+    display:none;
+    align-items:center; justify-content:center;
+    flex-direction:column;
+    background:rgba(6,5,9,0.96);
+    z-index:50;
+    padding:1.5rem;
+  }
+  .overlay.show{ display:flex; }
+
+  /* ===== Confirm overlay ===== */
+  #confirmOverlay{ overflow:hidden; }
+  .confirm-rays{
+    position:absolute; inset:-60%;
+    background:var(--rainbow);
+    opacity:0.12;
+    filter:blur(30px);
+    animation:raySpin 12s linear infinite;
+    z-index:0;
+  }
+  #confirmOverlay > *:not(.confirm-rays){ position:relative; z-index:1; }
+  #confirmOverlay .stage-tag{
+    font-size:clamp(1rem, 2.2vw, 1.3rem);
+    font-weight:800;
+    letter-spacing:0.1em;
+    color:var(--gold);
+    opacity:0.9;
+    margin-bottom:0.4rem;
+  }
+  #confirmOverlay .big-num{
+    font-size:clamp(4.5rem, 22vw, 9rem);
+    font-weight:900;
+    color:var(--white);
+    line-height:1;
+    text-shadow:0 4px 12px rgba(0,0,0,0.9);
+    animation:popIn 0.35s cubic-bezier(.34,1.56,.64,1);
+  }
+  @keyframes popIn{
+    0%{ transform:scale(0.3); opacity:0; }
+    60%{ transform:scale(1.15); opacity:1; }
+    100%{ transform:scale(1); opacity:1; }
+  }
+  #confirmOverlay .unit{
+    font-size:0.35em;
+    margin-left:0.1em;
+    opacity:0.8;
+  }
+  #confirmOverlay .special-tag{
+    margin-top:0.3rem;
+    font-size:clamp(1.1rem, 2.6vw, 1.5rem);
+    font-weight:800;
+    color:var(--gold);
+    min-height:1.6em;
+  }
+  #confirmOverlay .question{
+    margin:0.6rem 0 2.2rem;
+    font-size:clamp(1.1rem, 3vw, 1.5rem);
+    color:var(--white);
+  }
+  .confirm-buttons{
+    display:flex;
+    gap:1.8rem;
+    flex-wrap:wrap;
+    justify-content:center;
+  }
+  .confirm-buttons button{
+    min-width:10rem;
+    padding:1.1rem 2rem;
+    font-size:1.25rem;
+    font-weight:800;
+    border-radius:12px;
+    cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+    transition:transform 0.08s ease;
+  }
+  .confirm-buttons button:active{ transform:scale(0.95); }
+  #confirmYes{
+    background:var(--gold);
+    color:#1a1400;
+    border:3px solid #fff;
+  }
+  #confirmNo{
+    background:#2b2f3d;
+    color:var(--white);
+    border:3px solid rgba(255,255,255,0.55);
+  }
+  #confirmYes:focus-visible, #confirmNo:focus-visible{
+    outline:4px solid #fff;
+    outline-offset:3px;
+  }
+
+  /* 決定した瞬間の演出 */
+  #decideFlash{
+    position:fixed; inset:0;
+    background:#fff;
+    z-index:80;
+    opacity:0;
+    pointer-events:none;
+  }
+  #decideFlash.flash{ animation:whiteFlash 0.35s ease-out; }
+  @keyframes whiteFlash{
+    0%{ opacity:0.85; }
+    100%{ opacity:0; }
+  }
+  #jackpotRing{
+    position:fixed;
+    top:50%; left:50%;
+    width:120px; height:120px;
+    margin:-60px 0 0 -60px;
+    border-radius:50%;
+    background:var(--rainbow);
+    z-index:79;
+    opacity:0;
+    pointer-events:none;
+    -webkit-mask:radial-gradient(closest-side, transparent 78%, #000 80%);
+    mask:radial-gradient(closest-side, transparent 78%, #000 80%);
+  }
+  #jackpotRing.burst{ animation:jackpotBurst 0.6s ease-out; }
+  @keyframes jackpotBurst{
+    0%{ transform:scale(0.4); opacity:1; }
+    100%{ transform:scale(5.5); opacity:0; }
+  }
+
+  /* ===== Video overlay ===== */
+  #videoOverlay{
+    background:#000;
+    padding:0;
+  }
+  #videoOverlay .video-frame{
+    position:relative;
+    width:100%; height:100%;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #pinVideo{
+    width:100%; height:100%;
+    object-fit:contain;
+    background:#000;
+  }
+  #placeholderMsg{
+    position:absolute;
+    inset:0;
+    z-index:2;
+    display:none;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:0.6rem;
+  }
+  #placeholderMsg.show{ display:flex; }
+  #placeholderMsg .p-num{
+    font-size:clamp(3.5rem, 15vw, 7rem);
+    font-weight:900;
+    color:var(--white);
+  }
+  #placeholderMsg .p-text{
+    font-size:clamp(1rem, 2.6vw, 1.4rem);
+    color:var(--white);
+    opacity:0.75;
+  }
+  #backBtn{
+    position:absolute;
+    bottom:2rem;
+    left:50%;
+    transform:translateX(-50%);
+    z-index:3;
+    padding:1rem 2.6rem;
+    font-size:1.15rem;
+    font-weight:800;
+    background:var(--gold);
+    color:#1a1400;
+    border:3px solid #fff;
+    border-radius:12px;
+    cursor:pointer;
+    display:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #backBtn.show{ display:block; }
+  #backBtn:focus-visible{
+    outline:4px solid #fff;
+    outline-offset:3px;
+  }
+
+  /* ===== Camera settings overlay ===== */
+  #camOverlay h2{
+    margin:0 0 1.2rem;
+    font-size:1.4rem;
+    font-weight:800;
+  }
+  #camSelect{
+    width:min(90vw, 420px);
+    padding:0.7rem 0.9rem;
+    font-size:1.05rem;
+    border-radius:10px;
+    border:2px solid rgba(255,255,255,0.4);
+    background:#1d2230;
+    color:#fff;
+    margin-bottom:1.6rem;
+  }
+  #camOverlay .cam-overlay-note{
+    font-size:0.85rem;
+    opacity:0.65;
+    max-width:420px;
+    text-align:center;
+    margin:-0.8rem 0 1.4rem;
+  }
+  #calibStatusText{
+    font-size:0.95rem;
+    font-weight:800;
+    color:var(--gold);
+    opacity:0.95;
+    max-width:420px;
+    text-align:center;
+    margin:0 0 1rem;
+  }
+  #camOverlay .confirm-buttons{ margin-bottom:1.2rem; }
+  #camOverlay .confirm-buttons:last-of-type{ margin-bottom:0; }
+
+  /* ===== Calibration overlay ===== */
+  .calib-frame{
+    position:relative;
+    width:min(92vw, 900px);
+    aspect-ratio:16/9;
+    background:#000;
+    border-radius:12px;
+    overflow:hidden;
+    border:2px solid rgba(255,255,255,0.3);
+  }
+  #calibVideo{
+    width:100%; height:100%;
+    object-fit:contain;
+    background:#000;
+    display:block;
+  }
+  #calibCanvas{
+    position:absolute; inset:0;
+    width:100%; height:100%;
+    cursor:crosshair;
+    touch-action:none;
+  }
+  .calib-text{
+    margin:1.2rem 0 1.6rem;
+    font-size:clamp(1rem, 2.4vw, 1.3rem);
+    text-align:center;
+    color:var(--gold);
+    font-weight:800;
+    max-width:90vw;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .pin-btn, .pin-btn.flash, .bg-rays, .confirm-rays,
+    #confirmOverlay .big-num, #decideFlash.flash, #jackpotRing.burst{
+      animation:none !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-rays"></div>
+<div class="bg-dim"></div>
+<div id="decideFlash"></div>
+<div id="jackpotRing"></div>
+
+<header>
+  <h1>何本倒れた?</h1>
+  <p id="subText">1投目・本数を選んでください</p>
+</header>
+
+<div class="cam-wrap">
+  <div class="scoreboard" id="scoreboard">
+    <div class="frame-box" id="frameBox1">
+      <div class="frame-label">1F</div>
+      <div class="frame-throws">
+        <span class="throw-cell" id="f1c1">-</span>
+        <span class="throw-cell" id="f1c2">-</span>
+      </div>
+      <div class="frame-score" id="f1score">-</div>
+    </div>
+    <div class="frame-box" id="frameBox2">
+      <div class="frame-label">2F</div>
+      <div class="frame-throws">
+        <span class="throw-cell" id="f2c1">-</span>
+        <span class="throw-cell" id="f2c2">-</span>
+      </div>
+      <div class="frame-score" id="f2score">-</div>
+    </div>
+    <div class="frame-box" id="frameBox3">
+      <div class="frame-label">3F(最終)</div>
+      <div class="frame-throws">
+        <span class="throw-cell" id="f3c1">-</span>
+        <span class="throw-cell" id="f3c2">-</span>
+        <span class="throw-cell" id="f3c3">-</span>
+      </div>
+      <div class="frame-score" id="f3score">-</div>
+    </div>
+    <div class="frame-box total-box">
+      <div class="frame-label">合計</div>
+      <div class="frame-score big" id="grandTotal">-</div>
+    </div>
+  </div>
+
+  <div class="camera-panel">
+    <video id="camFeed" autoplay muted playsinline></video>
+    <div class="cam-placeholder" id="camPlaceholder">
+      <div class="cam-ph-icon">📷</div>
+      <div id="camPlaceholderText">カメラ未接続</div>
+      <button id="camStartBtn" class="cam-start-btn" type="button">カメラを起動</button>
+    </div>
+    <div class="cam-detect-badge hide" id="detectBadge">検出:<span id="detectNum">0</span><span class="u">本</span></div>
+    <button id="camResetBtn" class="cam-icon-btn" type="button" title="ゲームをリセット">リセット</button>
+    <button id="camSettingsBtn" class="cam-icon-btn" type="button" title="カメラ設定">⚙</button>
+  </div>
+</div>
+
+<main>
+  <div class="board" id="board"></div>
+  <div class="game-over-panel" id="gameOverPanel">
+    <div class="go-title">ゲーム終了!</div>
+    <div class="go-total">合計 <span id="goTotalNum">0</span> 点</div>
+    <button id="goResetBtn" class="cam-start-btn" type="button">次のプレイヤーへ(リセット)</button>
+  </div>
+</main>
+
+<!-- 確認オーバーレイ -->
+<div class="overlay" id="confirmOverlay">
+  <div class="confirm-rays"></div>
+  <div class="stage-tag" id="confirmStage">1投目</div>
+  <div class="big-num"><span id="confirmNum">0</span><span class="unit">本</span></div>
+  <div class="special-tag" id="confirmSpecial"></div>
+  <div class="question">この本数で決定しますか?</div>
+  <div class="confirm-buttons">
+    <button id="confirmNo">いいえ</button>
+    <button id="confirmYes">はい</button>
+  </div>
+</div>
+
+<!-- 動画オーバーレイ -->
+<div class="overlay" id="videoOverlay">
+  <div class="video-frame">
+    <video id="pinVideo" playsinline></video>
+    <div id="placeholderMsg">
+      <div class="p-num" id="placeholderNum">0</div>
+      <div class="p-text">動画準備中です</div>
+    </div>
+  </div>
+  <button id="backBtn">もどる</button>
+</div>
+
+<!-- フレーム結果オーバーレイ -->
+<div class="overlay" id="frameResultOverlay">
+  <div class="fr-title" id="frTitle">1フレーム目 終了</div>
+  <div class="fr-score" id="frScoreWrap">得点 <span id="frScoreNum">0</span></div>
+  <div class="fr-pending" id="frPendingText"></div>
+  <button id="frContinueBtn" class="cam-start-btn" type="button">次のフレームへ</button>
+</div>
+
+<!-- カメラ設定オーバーレイ -->
+<div class="overlay" id="camOverlay">
+  <h2>カメラを選択</h2>
+  <div class="cam-overlay-note">iPhoneをUSBカメラ化するアプリ(Camo / iVCam / EpocCam等)を使っている場合、そのカメラ名を選んでください。</div>
+  <select id="camSelect"></select>
+
+  <div id="calibStatusText">ピン位置: 未設定</div>
+  <div class="confirm-buttons">
+    <button id="calibStartBtn" type="button">ピン位置を設定</button>
+    <button id="baselineCaptureBtn" type="button">基準を撮影</button>
+  </div>
+  <div class="cam-overlay-note">「ピン位置を設定」は最初に1回だけ。「基準を撮影」は、10本すべてが立っている状態のときに毎回(セット直し後など)押してください。</div>
+
+  <div class="confirm-buttons">
+    <button id="camSelectCancel">閉じる</button>
+    <button id="camSelectOk">このカメラにする</button>
+  </div>
+</div>
+
+<!-- ピン位置キャリブレーションオーバーレイ -->
+<div class="overlay" id="calibOverlay">
+  <div class="calib-frame">
+    <video id="calibVideo" autoplay muted playsinline></video>
+    <canvas id="calibCanvas"></canvas>
+  </div>
+  <div class="calib-text" id="calibText">1本目のピンの位置をタップしてください(1/10)</div>
+  <div class="confirm-buttons">
+    <button id="calibUndoBtn" type="button">1つ戻す</button>
+    <button id="calibCancelBtn" type="button">キャンセル</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  const board = document.getElementById('board');
+  const subText = document.getElementById('subText');
+  const confirmOverlay = document.getElementById('confirmOverlay');
+  const confirmStage = document.getElementById('confirmStage');
+  const confirmNum = document.getElementById('confirmNum');
+  const confirmSpecial = document.getElementById('confirmSpecial');
+  const confirmYes = document.getElementById('confirmYes');
+  const confirmNo = document.getElementById('confirmNo');
+  const videoOverlay = document.getElementById('videoOverlay');
+  const pinVideo = document.getElementById('pinVideo');
+  const placeholderMsg = document.getElementById('placeholderMsg');
+  const placeholderNum = document.getElementById('placeholderNum');
+  const backBtn = document.getElementById('backBtn');
+  const decideFlash = document.getElementById('decideFlash');
+  const jackpotRing = document.getElementById('jackpotRing');
+
+  const gameOverPanel = document.getElementById('gameOverPanel');
+  const goTotalNum = document.getElementById('goTotalNum');
+  const goResetBtn = document.getElementById('goResetBtn');
+
+  const frameResultOverlay = document.getElementById('frameResultOverlay');
+  const frTitle = document.getElementById('frTitle');
+  const frScoreWrap = document.getElementById('frScoreWrap');
+  const frScoreNum = document.getElementById('frScoreNum');
+  const frPendingText = document.getElementById('frPendingText');
+  const frContinueBtn = document.getElementById('frContinueBtn');
+
+  const frameBoxes = [
+    document.getElementById('frameBox1'),
+    document.getElementById('frameBox2'),
+    document.getElementById('frameBox3')
+  ];
+  const frameCells = [
+    [document.getElementById('f1c1'), document.getElementById('f1c2')],
+    [document.getElementById('f2c1'), document.getElementById('f2c2')],
+    [document.getElementById('f3c1'), document.getElementById('f3c2'), document.getElementById('f3c3')]
+  ];
+  const frameScoreEls = [
+    document.getElementById('f1score'),
+    document.getElementById('f2score'),
+    document.getElementById('f3score')
+  ];
+  const grandTotalEl = document.getElementById('grandTotal');
+
+  const camFeed = document.getElementById('camFeed');
+  const camPlaceholder = document.getElementById('camPlaceholder');
+  const camPlaceholderText = document.getElementById('camPlaceholderText');
+  const camStartBtn = document.getElementById('camStartBtn');
+  const camSettingsBtn = document.getElementById('camSettingsBtn');
+  const camResetBtn = document.getElementById('camResetBtn');
+  const camOverlay = document.getElementById('camOverlay');
+  const camSelect = document.getElementById('camSelect');
+  const camSelectOk = document.getElementById('camSelectOk');
+  const camSelectCancel = document.getElementById('camSelectCancel');
+
+  const detectBadge = document.getElementById('detectBadge');
+  const detectNum = document.getElementById('detectNum');
+  const calibStatusText = document.getElementById('calibStatusText');
+  const calibStartBtn = document.getElementById('calibStartBtn');
+  const baselineCaptureBtn = document.getElementById('baselineCaptureBtn');
+  const calibOverlay = document.getElementById('calibOverlay');
+  const calibVideo = document.getElementById('calibVideo');
+  const calibCanvas = document.getElementById('calibCanvas');
+  const calibText = document.getElementById('calibText');
+  const calibUndoBtn = document.getElementById('calibUndoBtn');
+  const calibCancelBtn = document.getElementById('calibCancelBtn');
+
+  // ===== フレーム状態(3フレーム制・最終フレームはボーナス投球あり) =====
+  let currentFrame = 1;         // 1, 2, 3
+  let frameRolls = [[], [], []]; // 各フレームで倒した本数(投球順)
+  let pendingNumber = null;
+  let gameOver = false;
+  let nextStageAfterVideo = 'sameFrame'; // 'sameFrame' | 'nextFrame'
+
+  // ===== 効果音 =====
+  let audioCtx = null;
+  function getCtx(){
+    if(!audioCtx){
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if(audioCtx.state === 'suspended'){ audioCtx.resume(); }
+    return audioCtx;
+  }
+  function tone(freq, start, duration, type, gainPeak){
+    const ctx = getCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type || 'square';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0, ctx.currentTime + start);
+    gain.gain.linearRampToValueAtTime(gainPeak||0.18, ctx.currentTime + start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + duration);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(ctx.currentTime + start);
+    osc.stop(ctx.currentTime + start + duration + 0.02);
+  }
+  function playTapSound(){ tone(880, 0, 0.08, 'square', 0.14); }
+
+  // 本数ボタンの効果音: sounds/tap_00.mp3〜tap_10.mp3
+  // ファイルが無い/読み込めない場合は自動で今までの生成音にフォールバックする
+  function playTapSoundFor(n){
+    const audio = new Audio('sounds/tap_' + pad(n) + '.mp3');
+    let handled = false;
+    const fallback = () => {
+      if(handled) return;
+      handled = true;
+      playTapSound();
+    };
+    audio.onerror = fallback;
+    audio.play().catch(fallback);
+  }
+
+  function playDecideSound(){
+    tone(660, 0,    0.12, 'triangle', 0.18);
+    tone(880, 0.10, 0.12, 'triangle', 0.18);
+    tone(1175,0.20, 0.22, 'triangle', 0.2);
+  }
+  function playCancelSound(){ tone(300, 0, 0.12, 'sine', 0.12); }
+
+  function pad(n){ return n.toString().padStart(2,'0'); }
+
+  // ===== 今の投球で選べる本数(最大値)や状況を判定 =====
+  function getThrowContext(){
+    if(currentFrame === 1 || currentFrame === 2){
+      const rolls = frameRolls[currentFrame - 1];
+      if(rolls.length === 0){
+        return { max: 10, isFirst: true, ballNum: 1 };
+      }else{
+        return { max: 10 - rolls[0], isFirst: false, ballNum: 2 };
+      }
+    }else{
+      const rolls = frameRolls[2];
+      if(rolls.length === 0){
+        return { max: 10, ballNum: 1 };
+      }
+      if(rolls.length === 1){
+        const first = rolls[0];
+        return first === 10 ? { max: 10, ballNum: 2 } : { max: 10 - first, ballNum: 2 };
+      }
+      // rolls.length === 2 (ボーナス投球=3投目)
+      const first = rolls[0], second = rolls[1];
+      if(first === 10 && second === 10){
+        return { max: 10, ballNum: 3 };
+      }else if(first === 10){
+        return { max: 10 - second, ballNum: 3 };
+      }else{
+        return { max: 10, ballNum: 3 }; // 1・2投目でスペア成立時のボーナス(フルリセット)
+      }
+    }
+  }
+
+  // ===== 盤面の組み立て =====
+  function buildBoard(){
+    board.innerHTML = '';
+    const ctx = getThrowContext();
+    const maxN = ctx.max;
+    for(let i=0; i<=maxN; i++){
+      const isStrike = (maxN === 10 && i === 10);
+      const isSpare  = (maxN < 10 && i === maxN);
+      board.appendChild(makeBtn(i, isStrike, isSpare));
+    }
+  }
+
+  function makeBtn(i, isStrike, isSpare){
+    const btn = document.createElement('button');
+    btn.className = 'pin-btn' + (isStrike ? ' strike' : '') + (isSpare ? ' spare' : '');
+    btn.type = 'button';
+    let labelHtml = '';
+    if(isStrike) labelHtml = '<span class="label">ストライク</span>';
+    if(isSpare)  labelHtml = '<span class="label">スペア</span>';
+    btn.innerHTML = i + labelHtml + '<span class="tap-ring"></span>';
+    btn.addEventListener('click', () => {
+      playTapSoundFor(i);
+      btn.classList.remove('flash');
+      void btn.offsetWidth;
+      btn.classList.add('flash');
+      openConfirm(i, isSpare, isStrike);
+    });
+    return btn;
+  }
+
+  function updateSubText(){
+    if(gameOver){
+      subText.textContent = '全3フレーム終了です!お疲れさまでした';
+      return;
+    }
+    const ctx = getThrowContext();
+    const frameLabel = currentFrame + 'フレーム目' + (currentFrame === 3 ? '(最終)' : '');
+    let ballText;
+    if(ctx.ballNum === 1){
+      ballText = '1投目を選んでください';
+    }else{
+      ballText = ctx.ballNum + '投目・' + (ctx.max === 10 ? 'ボーナスにつき全10本の中' : '残り' + ctx.max + '本以内') + 'で選んでください';
+    }
+    subText.textContent = frameLabel + '・' + ballText;
+  }
+
+  function openConfirm(n, isSpare, isStrike){
+    pendingNumber = n;
+    const ctx = getThrowContext();
+    confirmStage.textContent = currentFrame + 'フレーム目・' + ctx.ballNum + '投目';
+    confirmNum.textContent = n;
+    confirmSpecial.textContent = isStrike ? 'ストライク' : (isSpare ? 'スペア' : '');
+    const big = confirmNum.parentElement;
+    big.style.animation = 'none';
+    void big.offsetWidth;
+    big.style.animation = '';
+    confirmOverlay.classList.add('show');
+  }
+
+  confirmNo.addEventListener('click', () => {
+    playCancelSound();
+    confirmOverlay.classList.remove('show');
+    pendingNumber = null;
+  });
+
+  confirmYes.addEventListener('click', () => {
+    playDecideSound();
+    decideFlash.classList.remove('flash');
+    void decideFlash.offsetWidth;
+    decideFlash.classList.add('flash');
+    jackpotRing.classList.remove('burst');
+    void jackpotRing.offsetWidth;
+    jackpotRing.classList.add('burst');
+    confirmOverlay.classList.remove('show');
+
+    const ctx = getThrowContext();
+    const val = pendingNumber;
+    const isSpareThrow = (ctx.max < 10 && val === ctx.max);
+    frameRolls[currentFrame - 1].push(val);
+    updateScoreboard();
+
+    // このフレームがこれで終わりかどうかを判定
+    let frameFinished = false;
+    if(currentFrame === 1 || currentFrame === 2){
+      if(ctx.ballNum === 1){
+        frameFinished = (val === 10); // ストライクならフレーム終了
+      }else{
+        frameFinished = true; // 2投目で必ず終了
+      }
+    }else{
+      const rolls = frameRolls[2];
+      if(rolls.length === 1){
+        frameFinished = false; // 必ず2投目へ
+      }else if(rolls.length === 2){
+        const first = rolls[0];
+        if(first === 10){
+          frameFinished = false; // 1投目ストライクなら必ずボーナスの3投目へ
+        }else{
+          frameFinished = (first + rolls[1] < 10); // スペアでなければここで終了
+        }
+      }else{
+        frameFinished = true; // 3投目まで来たら必ず終了
+      }
+    }
+
+    nextStageAfterVideo = frameFinished ? 'nextFrame' : 'sameFrame';
+    playVideoFor(val, isSpareThrow);
+  });
+
+  // ===== 得点計算(本物のボウリングと同じ、ストライク/スペアにボーナス加算) =====
+  function computeScores(){
+    const flat = frameRolls[0].concat(frameRolls[1]).concat(frameRolls[2]);
+    const scores = [null, null, null];
+    let idx = 0;
+
+    // 1・2フレーム目(共通ロジック)
+    for(let f = 0; f < 2; f++){
+      const r = frameRolls[f];
+      if(r.length === 1 && r[0] === 10){
+        if(flat.length >= idx + 3) scores[f] = 10 + flat[idx + 1] + flat[idx + 2];
+        idx += 1;
+      }else if(r.length === 2){
+        const sum = r[0] + r[1];
+        if(sum === 10){
+          if(flat.length >= idx + 3) scores[f] = 10 + flat[idx + 2];
+        }else{
+          scores[f] = sum;
+        }
+        idx += 2;
+      }else{
+        idx += r.length;
+      }
+    }
+
+    // 3フレーム目(最終・ボーナス込みで単純合計)
+    if(gameOver){
+      scores[2] = frameRolls[2].reduce((a, b) => a + b, 0);
+    }
+
+    // 累計(いずれかが未確定ならそこで止める)
+    const cumulative = [null, null, null];
+    let running = 0;
+    for(let i = 0; i < 3; i++){
+      if(scores[i] === null) break;
+      running += scores[i];
+      cumulative[i] = running;
+    }
+    return cumulative;
+  }
+
+  function symbolFor(value, isSecondOfPair, pairSum){
+    if(value === 10) return 'X';
+    if(isSecondOfPair && pairSum === 10) return '/';
+    return String(value);
+  }
+
+  function frame3CellSymbols(rolls){
+    const cells = ['-', '-', '-'];
+    if(rolls.length >= 1) cells[0] = symbolFor(rolls[0]);
+    if(rolls.length >= 2){
+      cells[1] = (rolls[0] === 10) ? symbolFor(rolls[1]) : symbolFor(rolls[1], true, rolls[0] + rolls[1]);
+    }
+    if(rolls.length >= 3){
+      if(rolls[0] === 10 && rolls[1] === 10){
+        cells[2] = symbolFor(rolls[2]);
+      }else if(rolls[0] === 10){
+        cells[2] = symbolFor(rolls[2], true, rolls[1] + rolls[2]);
+      }else{
+        cells[2] = symbolFor(rolls[2]);
+      }
+    }
+    return cells;
+  }
+
+  function updateScoreboard(){
+    // 1・2フレーム目のマス
+    for(let f = 0; f < 2; f++){
+      const r = frameRolls[f];
+      const cells = frameCells[f];
+      cells[0].textContent = r.length >= 1 ? symbolFor(r[0]) : '-';
+      cells[1].textContent = r.length >= 2 ? symbolFor(r[1], true, r[0] + r[1]) : '-';
+      cells.forEach((c, i) => c.classList.toggle('filled', r.length > i));
+    }
+    // 3フレーム目のマス
+    {
+      const r = frameRolls[2];
+      const cells = frameCells[2];
+      const syms = frame3CellSymbols(r);
+      cells.forEach((c, i) => {
+        c.textContent = syms[i];
+        c.classList.toggle('filled', r.length > i);
+      });
+    }
+
+    const cumulative = computeScores();
+    for(let i = 0; i < 3; i++){
+      frameScoreEls[i].textContent = (cumulative[i] === null) ? '-' : cumulative[i];
+    }
+    grandTotalEl.textContent = (cumulative[2] === null) ? '-' : cumulative[2];
+
+    frameBoxes.forEach((box, i) => {
+      box.classList.toggle('current', !gameOver && (i === currentFrame - 1));
+    });
+
+    if(gameOver){
+      goTotalNum.textContent = (cumulative[2] === null) ? '-' : cumulative[2];
+    }
+  }
+
+  function resetGame(){
+    confirmOverlay.classList.remove('show');
+    frameResultOverlay.classList.remove('show');
+    currentFrame = 1;
+    frameRolls = [[], [], []];
+    gameOver = false;
+    gameOverPanel.classList.remove('show');
+    board.classList.remove('hide');
+    updateSubText();
+    buildBoard();
+    updateScoreboard();
+  }
+
+  // ===== 動画再生 =====
+  function playVideoFor(n, isSpare){
+    placeholderMsg.classList.remove('show');
+    backBtn.classList.remove('show');
+    pinVideo.style.display = 'block';
+
+    const src = isSpare ? ('videos/spare_' + pad(n) + '.mp4') : ('videos/pin_' + pad(n) + '.mp4');
+    pinVideo.src = src;
+    videoOverlay.classList.add('show');
+
+    pinVideo.onerror = () => {
+      pinVideo.style.display = 'none';
+      placeholderNum.textContent = isSpare ? (n + '本(スペア)') : (n + '本');
+      placeholderMsg.classList.add('show');
+      backBtn.classList.add('show');
+    };
+    pinVideo.onended = () => { backBtn.classList.add('show'); };
+    pinVideo.play().catch(() => { backBtn.classList.add('show'); });
+  }
+
+  backBtn.addEventListener('click', () => {
+    videoOverlay.classList.remove('show');
+    pinVideo.pause();
+    pinVideo.removeAttribute('src');
+    pinVideo.load();
+    backBtn.classList.remove('show');
+    placeholderMsg.classList.remove('show');
+
+    if(nextStageAfterVideo === 'nextFrame'){
+      if(currentFrame === 3){
+        gameOver = true;
+        updateScoreboard();
+        board.classList.add('hide');
+        gameOverPanel.classList.add('show');
+      }else{
+        showFrameResult(currentFrame);
+        return; // 「次のフレームへ」を押すまで進めない
+      }
+    }
+    updateSubText();
+    if(!gameOver){ buildBoard(); }
+    updateScoreboard();
+  });
+
+  function showFrameResult(frameNum){
+    const cumulative = computeScores();
+    const score = cumulative[frameNum - 1];
+    frTitle.textContent = frameNum + 'フレーム目 終了';
+    if(score === null){
+      frScoreWrap.style.display = 'none';
+      frPendingText.style.display = 'block';
+      frPendingText.textContent = 'ストライクまたはスペアのため、次のフレームの結果が出るまで得点は確定しません。';
+    }else{
+      frScoreWrap.style.display = 'block';
+      frPendingText.style.display = 'none';
+      frScoreNum.textContent = score;
+    }
+    frameResultOverlay.classList.add('show');
+  }
+
+  frContinueBtn.addEventListener('click', () => {
+    frameResultOverlay.classList.remove('show');
+    currentFrame += 1;
+    updateSubText();
+    buildBoard();
+    updateScoreboard();
+  });
+
+  goResetBtn.addEventListener('click', resetGame);
+
+  // 安全用: ゲーム全体を手動でリセット
+  camResetBtn.addEventListener('click', resetGame);
+
+  // ===== カメラ (iPhone等をUSB経由のWebカメラとして使用) =====
+  let currentStream = null;
+
+  async function startCamera(deviceId){
+    try{
+      if(currentStream){
+        currentStream.getTracks().forEach(t => t.stop());
+      }
+      const constraints = {
+        video: deviceId ? { deviceId: { exact: deviceId } } : true,
+        audio: false
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      currentStream = stream;
+      camFeed.srcObject = stream;
+      camFeed.style.display = 'block';
+      camPlaceholder.classList.add('hide');
+      if(deviceId){ localStorage.setItem('bowlingCamDeviceId', deviceId); }
+      await refreshDeviceList();
+    }catch(err){
+      console.error(err);
+      camFeed.style.display = 'none';
+      camPlaceholder.classList.remove('hide');
+      camPlaceholderText.textContent = 'カメラを取得できませんでした(接続やアプリの設定を確認してください)';
+    }
+  }
+
+  async function refreshDeviceList(){
+    try{
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const vids = devices.filter(d => d.kind === 'videoinput');
+      camSelect.innerHTML = '';
+      vids.forEach((d, idx) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || ('カメラ ' + (idx + 1));
+        camSelect.appendChild(opt);
+      });
+      const saved = localStorage.getItem('bowlingCamDeviceId');
+      if(saved && vids.some(d => d.deviceId === saved)){
+        camSelect.value = saved;
+      }
+    }catch(e){ console.error(e); }
+  }
+
+  camStartBtn.addEventListener('click', () => {
+    const saved = localStorage.getItem('bowlingCamDeviceId');
+    startCamera(saved || undefined);
+  });
+
+  camSettingsBtn.addEventListener('click', async () => {
+    await refreshDeviceList();
+    camOverlay.classList.add('show');
+  });
+
+  camSelectCancel.addEventListener('click', () => {
+    camOverlay.classList.remove('show');
+  });
+
+  camSelectOk.addEventListener('click', () => {
+    const id = camSelect.value;
+    camOverlay.classList.remove('show');
+    if(id){ startCamera(id); }
+  });
+
+  // 前回選んだカメラがあれば自動で起動を試みる
+  window.addEventListener('load', () => {
+    const saved = localStorage.getItem('bowlingCamDeviceId');
+    if(saved){ startCamera(saved); }
+  });
+
+  // ===== ピン自動検出(目安表示のみ。確定は人がボタンで行う) =====
+  // 「基準撮影」時の色と、現在の映像の色を10箇所で見比べて、
+  // 大きく変化した箇所を「倒れた」とみなして本数を数えるだけの簡易的な仕組みです。
+  // AIによる形状認識ではないため、照明やカメラのブレで誤差が出ます。あくまで目安表示です。
+  let pinPositions = null;   // [{x,y}, ...] 10箇所・映像に対する相対位置(0〜1)
+  let baselineColors = null; // [{r,g,b}, ...] 「基準撮影」時の各箇所の色
+  let calibPoints = [];      // キャリブレーション中に一時的にためる配列
+
+  try{
+    const savedPos = localStorage.getItem('bowlingPinPositions');
+    if(savedPos) pinPositions = JSON.parse(savedPos);
+  }catch(e){}
+  try{
+    const savedColors = localStorage.getItem('bowlingBaselineColors');
+    if(savedColors) baselineColors = JSON.parse(savedColors);
+  }catch(e){}
+
+  function updateCalibStatusText(){
+    if(pinPositions && pinPositions.length === 10){
+      calibStatusText.textContent = baselineColors
+        ? 'ピン位置: 設定済み ／ 基準: 撮影済み'
+        : 'ピン位置: 設定済み ／ 基準: 未撮影(全ピンが立っている状態で「基準を撮影」を押してください)';
+    }else{
+      calibStatusText.textContent = 'ピン位置: 未設定(まず「ピン位置を設定」を押してください)';
+    }
+  }
+  updateCalibStatusText();
+
+  // クリック位置を、映像フレーム内の相対座標(0〜1)に変換する
+  // (object-fit:contain の余白/レターボックス分を差し引いて計算)
+  function videoClickToNormalized(clientX, clientY, videoEl, boundsEl){
+    const rect = boundsEl.getBoundingClientRect();
+    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+    if(!vw || !vh) return null;
+    const boxRatio = rect.width / rect.height;
+    const vidRatio = vw / vh;
+    let dispW, dispH, offX, offY;
+    if(boxRatio > vidRatio){
+      dispH = rect.height;
+      dispW = dispH * vidRatio;
+      offX = (rect.width - dispW) / 2;
+      offY = 0;
+    }else{
+      dispW = rect.width;
+      dispH = dispW / vidRatio;
+      offX = 0;
+      offY = (rect.height - dispH) / 2;
+    }
+    const x = clientX - rect.left - offX;
+    const y = clientY - rect.top - offY;
+    if(x < 0 || y < 0 || x > dispW || y > dispH) return null;
+    return { x: x / dispW, y: y / dispH };
+  }
+
+  function redrawCalibMarks(){
+    const ctx = calibCanvas.getContext('2d');
+    calibCanvas.width = calibCanvas.clientWidth;
+    calibCanvas.height = calibCanvas.clientHeight;
+    ctx.clearRect(0, 0, calibCanvas.width, calibCanvas.height);
+    calibPoints.forEach((p, i) => {
+      const x = p.x * calibCanvas.width;
+      const y = p.y * calibCanvas.height;
+      ctx.beginPath();
+      ctx.arc(x, y, 13, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,210,74,0.85)';
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#1a1400';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), x, y);
+    });
+  }
+
+  function calibStepText(){
+    return (calibPoints.length + 1) + '本目のピンの位置をタップしてください(' + (calibPoints.length + 1) + '/10)';
+  }
+
+  calibCanvas.addEventListener('click', (e) => {
+    if(calibPoints.length >= 10) return;
+    const pos = videoClickToNormalized(e.clientX, e.clientY, calibVideo, calibCanvas);
+    if(!pos) return;
+    calibPoints.push(pos);
+    redrawCalibMarks();
+    if(calibPoints.length < 10){
+      calibText.textContent = calibStepText();
+    }else{
+      calibText.textContent = '10箇所設定しました。保存しています…';
+      setTimeout(finishCalibration, 400);
+    }
+  });
+
+  calibUndoBtn.addEventListener('click', () => {
+    if(calibPoints.length === 0) return;
+    calibPoints.pop();
+    redrawCalibMarks();
+    calibText.textContent = calibStepText();
+  });
+
+  calibCancelBtn.addEventListener('click', () => {
+    calibOverlay.classList.remove('show');
+    calibVideo.srcObject = null;
+  });
+
+  function finishCalibration(){
+    pinPositions = calibPoints.slice();
+    localStorage.setItem('bowlingPinPositions', JSON.stringify(pinPositions));
+    baselineColors = null;
+    localStorage.removeItem('bowlingBaselineColors');
+    updateCalibStatusText();
+    calibOverlay.classList.remove('show');
+    calibVideo.srcObject = null;
+  }
+
+  calibStartBtn.addEventListener('click', () => {
+    if(!currentStream){
+      alert('先にカメラを起動してください。');
+      return;
+    }
+    calibPoints = [];
+    calibVideo.srcObject = currentStream;
+    calibText.textContent = calibStepText();
+    camOverlay.classList.remove('show');
+    calibOverlay.classList.add('show');
+    requestAnimationFrame(redrawCalibMarks);
+  });
+
+  // ===== 色のサンプリング・比較 =====
+  const analysisCanvas = document.createElement('canvas');
+  const analysisCtx = analysisCanvas.getContext('2d', { willReadFrequently: true });
+
+  function samplePatchColor(videoEl, nx, ny, patchSize){
+    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+    if(!vw || !vh) return { r: 0, g: 0, b: 0 };
+    analysisCanvas.width = vw;
+    analysisCanvas.height = vh;
+    analysisCtx.drawImage(videoEl, 0, 0, vw, vh);
+    const px = Math.round(nx * vw);
+    const py = Math.round(ny * vh);
+    const half = Math.round(patchSize / 2);
+    const sx = Math.max(0, Math.min(vw - 1, px - half));
+    const sy = Math.max(0, Math.min(vh - 1, py - half));
+    const w = Math.max(1, Math.min(patchSize, vw - sx));
+    const h = Math.max(1, Math.min(patchSize, vh - sy));
+    const data = analysisCtx.getImageData(sx, sy, w, h).data;
+    let r = 0, g = 0, b = 0, count = 0;
+    for(let i = 0; i < data.length; i += 4){
+      r += data[i]; g += data[i + 1]; b += data[i + 2]; count++;
+    }
+    return { r: r / count, g: g / count, b: b / count };
+  }
+
+  function colorDist(a, b){
+    return Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2);
+  }
+
+  baselineCaptureBtn.addEventListener('click', () => {
+    if(!currentStream){
+      alert('先にカメラを起動してください。');
+      return;
+    }
+    if(!pinPositions || pinPositions.length !== 10){
+      alert('先に「ピン位置を設定」を行ってください。');
+      return;
+    }
+    baselineColors = pinPositions.map(p => samplePatchColor(camFeed, p.x, p.y, 24));
+    localStorage.setItem('bowlingBaselineColors', JSON.stringify(baselineColors));
+    updateCalibStatusText();
+    alert('基準を撮影しました。(10本すべてが立っている状態で撮影したか確認してください)');
+  });
+
+  // 検出のしきい値。誤って「倒れた」と判定しすぎる場合は数値を上げ、
+  // 逆に反応が鈍い場合は下げて調整してください。
+  const DETECT_THRESHOLD = 45;
+
+  function runDetection(){
+    if(!currentStream || !pinPositions || pinPositions.length !== 10 || !baselineColors){
+      detectBadge.classList.add('hide');
+      return;
+    }
+    if(camFeed.style.display === 'none') {
+      detectBadge.classList.add('hide');
+      return;
+    }
+    let fallen = 0;
+    pinPositions.forEach((p, i) => {
+      const c = samplePatchColor(camFeed, p.x, p.y, 24);
+      if(colorDist(c, baselineColors[i]) > DETECT_THRESHOLD) fallen++;
+    });
+    detectNum.textContent = fallen;
+    detectBadge.classList.remove('hide');
+  }
+
+  setInterval(runDetection, 700);
+
+  // ===== 初期化 =====
+  updateSubText();
+  buildBoard();
+  updateScoreboard();
+})();
+</script>
+
+</body>
+</html>
