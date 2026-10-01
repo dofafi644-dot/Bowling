@@ -52,7 +52,7 @@
     background:radial-gradient(ellipse at center, rgba(14,13,18,0.55) 0%, rgba(14,13,18,0.85) 70%);
   }
 
-  header, .cam-wrap, main, .overlay{ position:relative; z-index:1; }
+  header, main, .overlay{ position:relative; z-index:1; }
 
   /* ===== Header ===== */
   header{
@@ -303,8 +303,7 @@
     font-size:clamp(1.6rem, 4.5vw, 2.9rem);
     font-weight:900;
     cursor:pointer;
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-    line-height:1;
+    display:flex; align-items:center; justify-content:center;
     overflow:hidden;
     transition:transform 0.08s ease, border-color 0.15s ease;
     -webkit-tap-highlight-color:transparent;
@@ -321,11 +320,10 @@
     outline-offset:3px;
   }
   .pin-btn .label{
-    position:static;
-    margin-top:0.25rem;
-    line-height:1;
-    font-size:clamp(0.95rem, 2.3vw, 1.35rem);
-    font-weight:800;
+    position:absolute;
+    bottom:0.4em;
+    font-size:0.28em;
+    font-weight:700;
     letter-spacing:0.06em;
     color:var(--gold);
     text-shadow:0 1px 3px rgba(0,0,0,0.9);
@@ -590,6 +588,26 @@
   #camOverlay .confirm-buttons{ margin-bottom:1.2rem; }
   #camOverlay .confirm-buttons:last-of-type{ margin-bottom:0; }
 
+  #camOverlay{ overflow-y:auto; justify-content:flex-start; padding-top:1.5rem; padding-bottom:2rem; }
+  .settings-section{
+    width:min(92vw, 460px);
+    margin:0 0 1.2rem;
+    padding:0.9rem 1rem;
+    border:2px solid rgba(255,255,255,0.2);
+    border-radius:12px;
+    text-align:center;
+  }
+  .settings-section .sec-title{ font-weight:800; margin-bottom:0.6rem; color:var(--gold); }
+  .settings-section .cam-overlay-note{ margin:0.6rem auto 0; }
+  .settings-section input[type=range]{ width:60%; vertical-align:middle; }
+  #cropStrip{ display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:0.7rem; }
+  #cropStrip canvas{ width:52px; height:52px; border:3px solid #888; border-radius:6px; background:#000; }
+  #cropStrip canvas.st{ border-color:#4ade80; }
+  #cropStrip canvas.fl{ border-color:#e23b34; }
+  .confirm-buttons.small{ gap:0.7rem; margin-bottom:0.6rem !important; }
+  .confirm-buttons.small button{ min-width:7rem; padding:0.7rem 1rem; font-size:1rem; }
+  #trainCount{ font-size:0.9rem; margin-top:0.4rem; }
+
   /* ===== Calibration overlay ===== */
   .calib-frame{
     position:relative;
@@ -738,9 +756,29 @@
   <div id="calibStatusText">ピン位置: 未設定</div>
   <div class="confirm-buttons">
     <button id="calibStartBtn" type="button">ピン位置を設定</button>
-    <button id="baselineCaptureBtn" type="button">基準を撮影</button>
   </div>
-  <div class="cam-overlay-note">「ピン位置を設定」は最初に1回だけ。「基準を撮影」は、10本すべてが立っている状態のときに毎回(セット直し後など)押してください。</div>
+  <div class="cam-overlay-note">カメラの位置を動かしたら、ピン位置の設定をやり直してください。</div>
+
+  <div class="settings-section">
+    <div class="sec-title">切り出しサイズ(AIに見せる範囲)</div>
+    <input type="range" id="cropSlider" min="5" max="40" step="1"> <span id="cropVal"></span>
+    <div id="cropStrip"></div>
+    <div class="cam-overlay-note">ピン1本がちょうど中央に収まるサイズに調整してください。枠の色は、緑=立っている/赤=倒れている(AI判定)です。</div>
+  </div>
+
+  <div class="settings-section">
+    <div class="sec-title">学習用の画像を集める</div>
+    <div class="confirm-buttons small">
+      <button id="recStandBtn" type="button">立っている状態を記録</button>
+      <button id="recFallBtn" type="button">倒れた状態を記録</button>
+    </div>
+    <div class="confirm-buttons small">
+      <button id="trainSaveBtn" type="button">zipで保存</button>
+      <button id="trainClearBtn" type="button">記録をクリア</button>
+    </div>
+    <div id="trainCount">立っている:0枚 / 倒れている:0枚</div>
+    <div class="cam-overlay-note">1回押すと、10か所×3コマ=30枚を記録します。照明やピンの位置を少しずつ変えて、何回も押してください。「倒れた状態」は、ピンを全部どけた空のレーンです。</div>
+  </div>
 
   <div class="confirm-buttons">
     <button id="camSelectCancel">閉じる</button>
@@ -761,6 +799,7 @@
   </div>
 </div>
 
+<script src="libs/tf.min.js"></script>
 <script>
 (function(){
   const board = document.getElementById('board');
@@ -822,7 +861,14 @@
   const detectNum = document.getElementById('detectNum');
   const calibStatusText = document.getElementById('calibStatusText');
   const calibStartBtn = document.getElementById('calibStartBtn');
-  const baselineCaptureBtn = document.getElementById('baselineCaptureBtn');
+  const cropSlider = document.getElementById('cropSlider');
+  const cropVal = document.getElementById('cropVal');
+  const cropStrip = document.getElementById('cropStrip');
+  const recStandBtn = document.getElementById('recStandBtn');
+  const recFallBtn = document.getElementById('recFallBtn');
+  const trainSaveBtn = document.getElementById('trainSaveBtn');
+  const trainClearBtn = document.getElementById('trainClearBtn');
+  const trainCount = document.getElementById('trainCount');
   const calibOverlay = document.getElementById('calibOverlay');
   const calibVideo = document.getElementById('calibVideo');
   const calibCanvas = document.getElementById('calibCanvas');
@@ -1281,30 +1327,28 @@
   });
 
   // ===== ピン自動検出(目安表示のみ。確定は人がボタンで行う) =====
-  // 「基準撮影」時の色と、現在の映像の色を10箇所で見比べて、
-  // 大きく変化した箇所を「倒れた」とみなして本数を数えるだけの簡易的な仕組みです。
-  // AIによる形状認識ではないため、照明やカメラのブレで誤差が出ます。あくまで目安表示です。
+  // 10か所のピン位置を切り出し、Teachable Machineで学習した画像分類モデルで
+  // 「立っている/倒れている」を判定して、倒れた本数を数えます。
   let pinPositions = null;   // [{x,y}, ...] 10箇所・映像に対する相対位置(0〜1)
-  let baselineColors = null; // [{r,g,b}, ...] 「基準撮影」時の各箇所の色
   let calibPoints = [];      // キャリブレーション中に一時的にためる配列
 
   try{
     const savedPos = localStorage.getItem('bowlingPinPositions');
     if(savedPos) pinPositions = JSON.parse(savedPos);
   }catch(e){}
-  try{
-    const savedColors = localStorage.getItem('bowlingBaselineColors');
-    if(savedColors) baselineColors = JSON.parse(savedColors);
-  }catch(e){}
 
+  let aiStatus = 'loading';
   function updateCalibStatusText(){
-    if(pinPositions && pinPositions.length === 10){
-      calibStatusText.textContent = baselineColors
-        ? 'ピン位置: 設定済み ／ 基準: 撮影済み'
-        : 'ピン位置: 設定済み ／ 基準: 未撮影(全ピンが立っている状態で「基準を撮影」を押してください)';
-    }else{
-      calibStatusText.textContent = 'ピン位置: 未設定(まず「ピン位置を設定」を押してください)';
-    }
+    const posOk = pinPositions && pinPositions.length === 10;
+    const posText = posOk ? 'ピン位置: 設定済み' : 'ピン位置: 未設定(「ピン位置を設定」を押してください)';
+    const aiMap = {
+      loading: 'AIモデル: 読み込み中…',
+      ready: 'AIモデル: 読み込み済み',
+      notf: 'AIモデル: libs/tf.min.js が見つかりません',
+      nomodel: 'AIモデル: model/ フォルダが見つかりません(未学習なら下で画像を集めてください)',
+      nolabel: 'AIモデル: クラス名を「standing」「fallen」にしてください'
+    };
+    calibStatusText.textContent = posText + ' ／ ' + aiMap[aiStatus];
   }
   updateCalibStatusText();
 
@@ -1390,8 +1434,6 @@
   function finishCalibration(){
     pinPositions = calibPoints.slice();
     localStorage.setItem('bowlingPinPositions', JSON.stringify(pinPositions));
-    baselineColors = null;
-    localStorage.removeItem('bowlingBaselineColors');
     updateCalibStatusText();
     calibOverlay.classList.remove('show');
     calibVideo.srcObject = null;
@@ -1410,73 +1452,221 @@
     requestAnimationFrame(redrawCalibMarks);
   });
 
-  // ===== 色のサンプリング・比較 =====
-  const analysisCanvas = document.createElement('canvas');
-  const analysisCtx = analysisCanvas.getContext('2d', { willReadFrequently: true });
-
-  function samplePatchColor(videoEl, nx, ny, patchSize){
-    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
-    if(!vw || !vh) return { r: 0, g: 0, b: 0 };
-    analysisCanvas.width = vw;
-    analysisCanvas.height = vh;
-    analysisCtx.drawImage(videoEl, 0, 0, vw, vh);
-    const px = Math.round(nx * vw);
-    const py = Math.round(ny * vh);
-    const half = Math.round(patchSize / 2);
-    const sx = Math.max(0, Math.min(vw - 1, px - half));
-    const sy = Math.max(0, Math.min(vh - 1, py - half));
-    const w = Math.max(1, Math.min(patchSize, vw - sx));
-    const h = Math.max(1, Math.min(patchSize, vh - sy));
-    const data = analysisCtx.getImageData(sx, sy, w, h).data;
-    let r = 0, g = 0, b = 0, count = 0;
-    for(let i = 0; i < data.length; i += 4){
-      r += data[i]; g += data[i + 1]; b += data[i + 2]; count++;
-    }
-    return { r: r / count, g: g / count, b: b / count };
-  }
-
-  function colorDist(a, b){
-    return Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2);
-  }
-
-  baselineCaptureBtn.addEventListener('click', () => {
-    if(!currentStream){
-      alert('先にカメラを起動してください。');
-      return;
-    }
-    if(!pinPositions || pinPositions.length !== 10){
-      alert('先に「ピン位置を設定」を行ってください。');
-      return;
-    }
-    baselineColors = pinPositions.map(p => samplePatchColor(camFeed, p.x, p.y, 24));
-    localStorage.setItem('bowlingBaselineColors', JSON.stringify(baselineColors));
-    updateCalibStatusText();
-    alert('基準を撮影しました。(10本すべてが立っている状態で撮影したか確認してください)');
+  // ===== 切り出し =====
+  let cropRatio = parseFloat(localStorage.getItem('bowlingCropRatio')) || 0.15; // 映像の高さに対する割合
+  cropSlider.value = Math.round(cropRatio * 100);
+  cropVal.textContent = cropSlider.value + '%';
+  cropSlider.addEventListener('input', () => {
+    cropRatio = cropSlider.value / 100;
+    cropVal.textContent = cropSlider.value + '%';
+    localStorage.setItem('bowlingCropRatio', String(cropRatio));
+    updateStrip();
   });
 
-  // 検出のしきい値。誤って「倒れた」と判定しすぎる場合は数値を上げ、
-  // 逆に反応が鈍い場合は下げて調整してください。
-  const DETECT_THRESHOLD = 45;
-
-  function runDetection(){
-    if(!currentStream || !pinPositions || pinPositions.length !== 10 || !baselineColors){
-      detectBadge.classList.add('hide');
-      return;
-    }
-    if(camFeed.style.display === 'none') {
-      detectBadge.classList.add('hide');
-      return;
-    }
-    let fallen = 0;
-    pinPositions.forEach((p, i) => {
-      const c = samplePatchColor(camFeed, p.x, p.y, 24);
-      if(colorDist(c, baselineColors[i]) > DETECT_THRESHOLD) fallen++;
-    });
-    detectNum.textContent = fallen;
-    detectBadge.classList.remove('hide');
+  function drawCrop(cv, p){
+    const vw = camFeed.videoWidth, vh = camFeed.videoHeight;
+    if(!vw || !vh) return false;
+    const sz = Math.max(16, Math.min(vw, vh, Math.round(vh * cropRatio)));
+    const sx = Math.max(0, Math.min(vw - sz, Math.round(p.x * vw - sz / 2)));
+    const sy = Math.max(0, Math.min(vh - sz, Math.round(p.y * vh - sz / 2)));
+    cv.getContext('2d').drawImage(camFeed, sx, sy, sz, sz, 0, 0, cv.width, cv.height);
+    return true;
   }
 
-  setInterval(runDetection, 700);
+  // 設定画面の切り出しプレビュー(10個)
+  const stripCanvases = [];
+  for(let i = 0; i < 10; i++){
+    const c = document.createElement('canvas');
+    c.width = 112; c.height = 112;
+    cropStrip.appendChild(c);
+    stripCanvases.push(c);
+  }
+  let lastStates = null; // 直近の判定結果(true=立っている)
+  function updateStrip(){
+    if(!camOverlay.classList.contains('show')) return;
+    if(!pinPositions || pinPositions.length !== 10 || !currentStream) return;
+    stripCanvases.forEach((c, i) => {
+      drawCrop(c, pinPositions[i]);
+      c.classList.toggle('st', !!(lastStates && lastStates[i] === true));
+      c.classList.toggle('fl', !!(lastStates && lastStates[i] === false));
+    });
+  }
+  setInterval(updateStrip, 400);
+
+  // ===== AIモデル(Teachable Machine) =====
+  // model/model.json, model/metadata.json, model/weights.bin を置く
+  // クラス名は「standing」(立っている)と「fallen」(倒れている)にする
+  let aiModel = null, standingIdx = -1, inputSize = 224;
+  async function loadAiModel(){
+    if(typeof tf === 'undefined'){ aiStatus = 'notf'; updateCalibStatusText(); return; }
+    try{
+      aiModel = await tf.loadLayersModel('model/model.json');
+      const shape = aiModel.inputs[0].shape;
+      if(shape && shape[1]) inputSize = shape[1];
+      const res = await fetch('model/metadata.json');
+      const meta = await res.json();
+      const labels = meta.labels || [];
+      standingIdx = labels.findIndex(l => /^(standing|立)/i.test(String(l).trim()));
+      if(standingIdx < 0){ aiModel = null; aiStatus = 'nolabel'; }
+      else{ aiStatus = 'ready'; }
+    }catch(e){
+      console.error(e);
+      aiModel = null;
+      aiStatus = 'nomodel';
+    }
+    updateCalibStatusText();
+  }
+  loadAiModel();
+
+  // ===== 判定(5回分の多数決で安定させる) =====
+  const workCanvas = document.createElement('canvas');
+  const histories = [[], [], [], [], [], [], [], [], [], []];
+  const HISTORY_LEN = 5;
+  let detecting = false;
+
+  async function runDetection(){
+    if(detecting) return;
+    if(!aiModel || !currentStream || !pinPositions || pinPositions.length !== 10
+       || camFeed.style.display === 'none' || !camFeed.videoWidth){
+      detectBadge.classList.add('hide');
+      return;
+    }
+    detecting = true;
+    try{
+      workCanvas.width = inputSize; workCanvas.height = inputSize;
+      const out = tf.tidy(() => {
+        const imgs = pinPositions.map(p => {
+          drawCrop(workCanvas, p);
+          return tf.browser.fromPixels(workCanvas).toFloat().div(127.5).sub(1);
+        });
+        return aiModel.predict(tf.stack(imgs));
+      });
+      const data = await out.data();
+      out.dispose();
+      const nc = data.length / 10;
+      const states = [];
+      for(let i = 0; i < 10; i++){
+        const standing = data[i * nc + standingIdx] >= 0.5;
+        const h = histories[i];
+        h.push(standing ? 1 : 0);
+        if(h.length > HISTORY_LEN) h.shift();
+        const sum = h.reduce((a, b) => a + b, 0);
+        states.push(sum * 2 >= h.length); // 同数なら「立っている」寄り
+      }
+      lastStates = states;
+      const fallen = states.filter(v => !v).length;
+      detectNum.textContent = fallen;
+      detectBadge.classList.remove('hide');
+    }catch(e){
+      console.error(e);
+    }
+    detecting = false;
+  }
+  setInterval(runDetection, 500);
+
+  // ===== 学習用画像の記録(Teachable Machineにアップロードする用) =====
+  const trainData = { standing: [], fallen: [] };
+  let recording = false;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  function updateTrainCount(){
+    trainCount.textContent = '立っている:' + trainData.standing.length + '枚 / 倒れている:' + trainData.fallen.length + '枚';
+  }
+
+  async function recordTraining(kind){
+    if(recording) return;
+    if(!currentStream || !pinPositions || pinPositions.length !== 10){
+      alert('先にカメラを起動して、ピン位置を設定してください。');
+      return;
+    }
+    recording = true;
+    recStandBtn.disabled = recFallBtn.disabled = true;
+    try{
+      for(let k = 0; k < 3; k++){
+        for(const p of pinPositions){
+          const cv = document.createElement('canvas');
+          cv.width = 224; cv.height = 224;
+          drawCrop(cv, p);
+          const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+          trainData[kind].push(blob);
+        }
+        updateTrainCount();
+        if(k < 2) await sleep(300);
+      }
+    }catch(e){ console.error(e); }
+    recording = false;
+    recStandBtn.disabled = recFallBtn.disabled = false;
+  }
+  recStandBtn.addEventListener('click', () => recordTraining('standing'));
+  recFallBtn.addEventListener('click', () => recordTraining('fallen'));
+  trainClearBtn.addEventListener('click', () => {
+    if(!confirm('記録した学習用画像をすべて消しますか?')) return;
+    trainData.standing = []; trainData.fallen = [];
+    updateTrainCount();
+  });
+
+  // --- 簡易zip作成(無圧縮) ---
+  const crcTable = (() => {
+    const t = [];
+    for(let n = 0; n < 256; n++){
+      let c = n;
+      for(let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(u8){
+    let c = 0xFFFFFFFF;
+    for(let i = 0; i < u8.length; i++) c = crcTable[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function buildZip(files){
+    const enc = new TextEncoder();
+    const chunks = [], central = [];
+    let offset = 0;
+    files.forEach(f => {
+      const nameB = enc.encode(f.name);
+      const crc = crc32(f.data);
+      const size = f.data.length;
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+      lh.setUint16(8, 0, true); lh.setUint16(10, 0, true); lh.setUint16(12, 0x5821, true);
+      lh.setUint32(14, crc, true); lh.setUint32(18, size, true); lh.setUint32(22, size, true);
+      lh.setUint16(26, nameB.length, true); lh.setUint16(28, 0, true);
+      chunks.push(new Uint8Array(lh.buffer), nameB, f.data);
+      const ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true);
+      ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true); ch.setUint16(12, 0, true);
+      ch.setUint16(14, 0x5821, true); ch.setUint32(16, crc, true); ch.setUint32(20, size, true);
+      ch.setUint32(24, size, true); ch.setUint16(28, nameB.length, true);
+      ch.setUint32(42, offset, true);
+      central.push(new Uint8Array(ch.buffer), nameB);
+      offset += 30 + nameB.length + size;
+    });
+    let cdSize = 0;
+    central.forEach(c => cdSize += c.length);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true);
+    end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+    end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+    return new Blob([...chunks, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+  }
+
+  trainSaveBtn.addEventListener('click', async () => {
+    const total = trainData.standing.length + trainData.fallen.length;
+    if(total === 0){ alert('まだ画像が記録されていません。'); return; }
+    const files = [];
+    for(const kind of ['standing', 'fallen']){
+      for(let i = 0; i < trainData[kind].length; i++){
+        const buf = await trainData[kind][i].arrayBuffer();
+        files.push({ name: kind + '/' + kind + '_' + String(i + 1).padStart(4, '0') + '.png', data: new Uint8Array(buf) });
+      }
+    }
+    const url = URL.createObjectURL(buildZip(files));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'pin_training.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
 
   // ===== 初期化 =====
   updateSubText();
