@@ -302,10 +302,11 @@
     display:flex; align-items:center; justify-content:center;
     -webkit-tap-highlight-color:transparent;
   }
-  #camResetBtn, #camUndoBtn{
+  #camResetBtn, #camUndoBtn, #camRedoBtn{
     width:auto; border-radius:8px;
     padding:0 0.7rem; font-size:0.85rem; font-weight:800;
   }
+  .cam-icon-btn:disabled{ opacity:0.35; cursor:default; }
 
   /* ===== 下段:本数ボタン ===== */
   main{
@@ -667,7 +668,7 @@
     -webkit-tap-highlight-color:transparent;
   }
   #backBtn.show{ display:block; }
-  #undoVideoBtn{
+  #undoVideoBtn, #skipVideoBtn{
     position:absolute;
     bottom:2rem; left:1.5rem;
     z-index:3;
@@ -680,6 +681,9 @@
     cursor:pointer;
     -webkit-tap-highlight-color:transparent;
   }
+  /* 動画をスキップ(右下。左下の取り消しボタンと対称) */
+  #skipVideoBtn{ left:auto; right:1.5rem; }
+  #skipVideoBtn.hide{ display:none; }
   #backBtn:focus-visible{
     outline:4px solid #fff;
     outline-offset:3px;
@@ -871,7 +875,8 @@
       <div class="cam-progress"><div id="progressBar"></div></div>
     </div>
     <div class="cam-tools">
-      <button id="camUndoBtn" class="cam-icon-btn" type="button" title="直前の投球を取り消す">↩ 取り消し</button>
+      <button id="camUndoBtn" class="cam-icon-btn" type="button" title="直前の投球を取り消す(一つ前の結果に戻す)">↩ 取り消し</button>
+      <button id="camRedoBtn" class="cam-icon-btn" type="button" title="取り消した投球をもとに戻す" disabled>↪ やり直し</button>
       <button id="camResetBtn" class="cam-icon-btn" type="button" title="ゲームをリセット">リセット</button>
       <button id="camSettingsBtn" class="cam-icon-btn" type="button" title="カメラ設定">⚙</button>
     </div>
@@ -919,6 +924,7 @@
     </div>
   </div>
   <button id="undoVideoBtn" type="button">↩ 誤検出なら取り消し</button>
+  <button id="skipVideoBtn" type="button">スキップ ⏭</button>
   <button id="backBtn">もどる</button>
 </div>
 
@@ -1080,6 +1086,8 @@
   const standingThresholdVal = document.getElementById('standingThresholdVal');
   const camUndoBtn = document.getElementById('camUndoBtn');
   const undoVideoBtn = document.getElementById('undoVideoBtn');
+  const skipVideoBtn = document.getElementById('skipVideoBtn');
+  const camRedoBtn = document.getElementById('camRedoBtn');
   const detectBadge = document.getElementById('detectBadge');
   const detectNum = document.getElementById('detectNum');
   const calibStatusText = document.getElementById('calibStatusText');
@@ -1105,6 +1113,7 @@
   let pendingNumber = null;
   let gameOver = false;
   let nextStageAfterVideo = 'sameFrame'; // 'sameFrame' | 'nextFrame'
+  let redoStack = [];           // 取り消した投球 [{f:フレーム番号(0〜2), v:本数}] 。「やり直し」で元に戻す
 
   // ===== モード(人力 / 自動)と検出の状態 =====
   let mode = (localStorage.getItem('bowlingMode') === 'auto') ? 'auto' : 'manual';
@@ -1203,7 +1212,7 @@
     let f = 2;
     while(f >= 0 && frameRolls[f].length === 0) f--;
     if(f < 0) return false;
-    frameRolls[f].pop();
+    redoStack.push({ f: f, v: frameRolls[f].pop() });
     recomputeState();
     confirmOverlay.classList.remove('show');
     frameResultOverlay.classList.remove('show');
@@ -1215,6 +1224,31 @@
     if(!gameOver) buildBoard();
     updateScoreboard();
     return true;
+  }
+
+  // 取り消した投球を1つ元に戻す(取り消しの取り消し)
+  function redoLast(){
+    if(redoStack.length === 0) return false;
+    clearAllAuto();
+    const e = redoStack.pop();
+    frameRolls[e.f].push(e.v);
+    recomputeState();
+    confirmOverlay.classList.remove('show');
+    frameResultOverlay.classList.remove('show');
+    pendingNumber = null;
+    gameOverPanel.classList.toggle('show', gameOver);
+    board.classList.toggle('hide', gameOver);
+    updateSubText();
+    rearm();
+    if(!gameOver) buildBoard();
+    updateScoreboard();
+    return true;
+  }
+
+  // 取り消し/やり直しボタンの有効・無効
+  function updateUndoRedoButtons(){
+    camUndoBtn.disabled = !frameRolls.some(r => r.length > 0);
+    camRedoBtn.disabled = redoStack.length === 0;
   }
 
   // ===== 効果音 =====
@@ -1395,6 +1429,7 @@
     const ctx = getThrowContext();
     const isSpareThrow = (ctx.max < 10 && val === ctx.max);
     frameRolls[currentFrame - 1].push(val);
+    redoStack = []; // 新しく記録したら、やり直し履歴は破棄
     updateScoreboard();
 
     // このフレームがこれで終わりかどうかを判定
@@ -1514,6 +1549,7 @@
     for(let i = 0; i < 3; i++){
       frameScoreEls[i].textContent = (cumulative[i] === null) ? '-' : cumulative[i];
     }
+    updateUndoRedoButtons();
     grandTotalEl.textContent = (cumulative[2] === null) ? '-' : cumulative[2];
 
     frameBoxes.forEach((box, i) => {
@@ -1533,6 +1569,7 @@
     frameResultOverlay.classList.remove('show');
     currentFrame = 1;
     frameRolls = [[], [], []];
+    redoStack = [];
     gameOver = false;
     gameOverPanel.classList.remove('show');
     board.classList.remove('hide');
@@ -1563,6 +1600,7 @@
     if(videoDone || !videoOverlay.classList.contains('show')) return;
     videoDone = true;
     clearTimeout(videoWatch);
+    skipVideoBtn.classList.add('hide');
     backBtn.classList.add('show');
     if(mode === 'auto') startCountdown('back', AUTO_BACK_MS, backBtn, 'もどる', closeVideo);
   }
@@ -1577,10 +1615,12 @@
     const token = ++playToken;
     placeholderMsg.classList.remove('show');
     backBtn.classList.remove('show');
+    skipVideoBtn.classList.remove('hide');
     pinVideo.style.display = 'block';
     pinVideo.muted = false;
 
-    const src = isSpare ? ('videos/spare_' + pad(n) + '.mp4') : ('videos/pin_' + pad(n) + '.mp4');
+    // スペアは本数に関係なく1本の動画(videos/spare.mp4)を流す
+    const src = isSpare ? 'videos/spare.mp4' : ('videos/pin_' + pad(n) + '.mp4');
     pinVideo.src = src;
     videoOverlay.classList.add('show');
     armWatch(120000);
@@ -1626,6 +1666,9 @@
   }
 
   backBtn.addEventListener('click', closeVideo);
+
+  // 動画をスキップ: 再生を打ち切って、そのまま次の投球(またはフレーム結果)へ進む
+  skipVideoBtn.addEventListener('click', closeVideo);
 
   // 動画中に「誤検出だった」と気づいたとき: 動画を止めて、その投球をなかったことにする
   undoVideoBtn.addEventListener('click', () => {
@@ -1675,6 +1718,7 @@
     if(!confirm('直前の投球を取り消しますか?')) return;
     undoLast();
   });
+  camRedoBtn.addEventListener('click', redoLast);
 
   // ===== カメラ (iPhone等をUSB経由のWebカメラとして使用) =====
   let currentStream = null;
