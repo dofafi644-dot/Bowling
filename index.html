@@ -707,11 +707,37 @@
   .settings-section .sec-title{ font-weight:800; margin-bottom:0.6rem; color:var(--gold); }
   #camOverlay .settings-section .cam-overlay-note{ margin:0.8rem auto 0; }
   .settings-section input[type=range]{ width:60%; vertical-align:middle; }
-  #cropStrip{ display:grid; grid-template-columns:repeat(5, 56px); gap:6px; justify-content:center; margin-top:0.7rem; }
+  #cropStrip{
+    display:grid;
+    grid-template-columns:repeat(5, minmax(72px, 1fr));
+    gap:8px 6px;
+    justify-content:center;
+    width:100%;
+    max-width:430px;
+    margin:0.7rem auto 0;
+  }
+  .pin-preview{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:0.25rem;
+    min-width:0;
+  }
   #cropStrip canvas{ width:56px; height:56px; border:3px solid #888; border-radius:6px; background:#000; }
   #cropStrip canvas.st{ border-color:#4ade80; }
   #cropStrip canvas.fl{ border-color:#e23b34; }
   #cropStrip canvas.un{ border-color:#f59e0b; }
+  .pin-confidence{
+    font-size:0.66rem;
+    line-height:1.25;
+    font-weight:900;
+    text-align:center;
+    white-space:nowrap;
+    color:#cbd5e1;
+  }
+  .pin-confidence.standing{ color:#4ade80; }
+  .pin-confidence.fallen{ color:#e23b34; }
+  .pin-confidence.uncertain{ color:#f59e0b; }
   .confirm-buttons.small{ gap:0.7rem; margin-bottom:0.6rem !important; }
   .confirm-buttons.small button{ min-width:7rem; padding:0.7rem 1rem; font-size:1rem; }
   #trainCount{ font-size:0.9rem; margin-top:0.6rem; }
@@ -890,6 +916,15 @@
   </div>
 
   <div class="settings-section">
+    <div class="sec-title">AI判定しきい値（立っている判定）</div>
+    <input type="range" id="standingThresholdSlider" min="50" max="90" step="1"> <span id="standingThresholdVal"></span>
+    <div class="cam-overlay-note">
+      各ピンの「立っている」信頼度がこの値以上なら、立っている候補として確定します。
+      倒れた本数が実際より少なく出る場合は、少しずつ上げて調整してください。初期値は65%です。
+    </div>
+  </div>
+
+  <div class="settings-section">
     <div class="sec-title">自動モードの待ち時間</div>
     <input type="range" id="stableSlider" min="1" max="8" step="0.5"> <span id="stableVal"></span>
     <div class="cam-overlay-note">倒れた本数が、この秒数ずっと変わらなかったら自動で動画を流します。長いほど誤爆しにくく、短いほどテンポが良くなります。</div>
@@ -906,7 +941,7 @@
       <button id="trainClearBtn" type="button">記録をクリア</button>
     </div>
     <div id="trainCount">立っている:0枚 / 倒れている:0枚</div>
-    <div class="cam-overlay-note">1回押すと、10か所×3コマ=30枚を記録します。照明やピンの位置を少しずつ変えて、何回も押してください。「倒れた状態」は、ピンを全部どけた空のレーンです。</div>
+    <div class="cam-overlay-note">1回押すと、10か所×3コマ=30枚を記録します。照明やピンの位置を少しずつ変えて、何回も押してください。重要: fallen（倒れた状態）は空のレーンだけでなく、実際に横倒し・斜め・他のピンと重なった状態の画像もTeachable Machine側の学習データに追加すると、実運用での誤検知を減らしやすくなります。</div>
   </div>
 
   <div class="confirm-buttons">
@@ -991,6 +1026,8 @@
   const modeBtns = document.querySelectorAll('.mode-btn');
   const stableSlider = document.getElementById('stableSlider');
   const stableVal = document.getElementById('stableVal');
+  const standingThresholdSlider = document.getElementById('standingThresholdSlider');
+  const standingThresholdVal = document.getElementById('standingThresholdVal');
   const camUndoBtn = document.getElementById('camUndoBtn');
   const undoVideoBtn = document.getElementById('undoVideoBtn');
   const detectBadge = document.getElementById('detectBadge');
@@ -1022,6 +1059,17 @@
   // ===== モード(人力 / 自動)と検出の状態 =====
   let mode = (localStorage.getItem('bowlingMode') === 'auto') ? 'auto' : 'manual';
   let stableMs = (parseFloat(localStorage.getItem('bowlingStableSec')) || 3) * 1000;
+
+  // =====================================================
+  // AI判定精度調整（2026/10/02 追加）
+  // standing信頼度のしきい値を設定画面から変更可能にする。
+  // 「実際より倒れた本数が少なく出る」場合は、この値を少し上げる。
+  // =====================================================
+  let standingThreshold = parseFloat(localStorage.getItem('bowlingStandingThreshold'));
+  if(!Number.isFinite(standingThreshold) || standingThreshold < 0.50 || standingThreshold > 0.90){
+    standingThreshold = 0.65;
+  }
+
   const PREP_MS = 2000;      // ピンのセット完了とみなす安定時間
   let baseline = null;       // 今回の投球の前に「倒れ扱い」だった本数
   let stableCount = null;    // 同じ値が続いている検出本数
@@ -1820,6 +1868,23 @@
     localStorage.setItem('bowlingStableSec', String(stableMs / 1000));
   });
 
+  // ===== AI standing判定しきい値 =====
+  standingThresholdSlider.value = Math.round(standingThreshold * 100);
+  standingThresholdVal.textContent = Math.round(standingThreshold * 100) + '%';
+  standingThresholdSlider.addEventListener('input', () => {
+    standingThreshold = parseFloat(standingThresholdSlider.value) / 100;
+    standingThresholdVal.textContent = Math.round(standingThreshold * 100) + '%';
+    localStorage.setItem('bowlingStandingThreshold', String(standingThreshold));
+
+    // しきい値変更直後に古い履歴が残らないよう、判定履歴をリセットする。
+    histories.forEach(h => h.length = 0);
+    lastStates = null;
+    lastUncertain = null;
+    lastStandingScores.fill(null);
+    rearm();
+    updateStrip();
+  });
+
   function drawCrop(cv, p){
     const vw = camFeed.videoWidth, vh = camFeed.videoHeight;
     if(!vw || !vh) return false;
@@ -1830,25 +1895,70 @@
     return true;
   }
 
-  // 設定画面の切り出しプレビュー(10個)
+  // =====================================================
+  // 設定画面の切り出しプレビュー + AI信頼度表示（2026/10/02 追加）
+  // P1〜P10について standing / fallen の目安を表示し、
+  // どのピンで誤検知しているか現場で確認しやすくする。
+  // =====================================================
   const stripCanvases = [];
+  const confidenceEls = [];
+
   for(let i = 0; i < 10; i++){
+    const wrap = document.createElement('div');
+    wrap.className = 'pin-preview';
+
     const c = document.createElement('canvas');
-    c.width = 112; c.height = 112;
-    cropStrip.appendChild(c);
+    c.width = 112;
+    c.height = 112;
+
+    const label = document.createElement('div');
+    label.className = 'pin-confidence';
+    label.textContent = 'P' + (i + 1) + ': --';
+
+    wrap.appendChild(c);
+    wrap.appendChild(label);
+    cropStrip.appendChild(wrap);
+
     stripCanvases.push(c);
+    confidenceEls.push(label);
   }
+
   let lastStates = null; // 直近の判定結果(true=立っている)
   let lastUncertain = null; // 直近の「判定が不確か」フラグ(オレンジ枠)
+  const lastStandingScores = new Array(10).fill(null); // 各ピンの平滑化後standing信頼度
+
   function updateStrip(){
     if(!camOverlay.classList.contains('show')) return;
     if(!pinPositions || pinPositions.length !== 10 || !currentStream) return;
+
     stripCanvases.forEach((c, i) => {
       drawCrop(c, pinPositions[i]);
+
       const un = !!(lastUncertain && lastUncertain[i]);
+      const st = !!(lastStates && lastStates[i] === true);
+      const fl = !!(lastStates && lastStates[i] === false);
+
       c.classList.toggle('un', un);
-      c.classList.toggle('st', !un && !!(lastStates && lastStates[i] === true));
-      c.classList.toggle('fl', !un && !!(lastStates && lastStates[i] === false));
+      c.classList.toggle('st', !un && st);
+      c.classList.toggle('fl', !un && fl);
+
+      const label = confidenceEls[i];
+      const score = lastStandingScores[i];
+
+      label.classList.remove('standing', 'fallen', 'uncertain');
+
+      if(score === null || !Number.isFinite(score)){
+        label.textContent = 'P' + (i + 1) + ': --';
+        return;
+      }
+
+      const standPct = Math.round(score * 100);
+      const fallPct = 100 - standPct;
+      label.textContent = 'P' + (i + 1) + ' 立' + standPct + '% / 倒' + fallPct + '%';
+
+      if(un) label.classList.add('uncertain');
+      else if(st) label.classList.add('standing');
+      else if(fl) label.classList.add('fallen');
     });
   }
   setInterval(updateStrip, 400);
@@ -1975,15 +2085,30 @@
     }
   }
 
+  // =====================================================
+  // AI判定デバッグ改修メモ（2026/10/02）
+  // ・各ピンP1〜P10のstanding信頼度を設定画面に表示
+  // ・最終standing判定しきい値を設定画面から50〜90%で変更可能
+  // ・初期値65%
+  // ・既存の5回平均、ずれ探索、重複排除、自動モードは維持
+  // ・迷い範囲はオレンジ表示し、自動モードでは自動確定しない
+  // =====================================================
   // ===== 判定(ずれ許容の探索 + 重複排除 + ヒステリシス) =====
   const workCanvas = document.createElement('canvas');
   const histories = [[], [], [], [], [], [], [], [], [], []]; // ピンごとの standing スコア履歴
-  const HISTORY_LEN = 5;
-  const SEARCH_ON = true;      // false にすると従来どおり「定位置のみ」で判定
+  const HISTORY_LEN = 3;      // 1秒おき判定に合わせて平均回数を減らす(約3秒分)
+  const SEARCH_ON = false;     // 軽量化のため定位置のみで判定(true にすると周囲も探索。5倍重い)
   const SEARCH_SHIFT = 0.35;   // 探索のずらし量(切り出しサイズに対する割合)
-  const STAND_TH = 0.5;        // この値以上を「立っている」候補とみなす
-  const HYS_LO = 0.35, HYS_HI = 0.65; // この範囲は前回の判定を維持(ヒステリシス)
-  const UNC_LO = 0.30, UNC_HI = 0.70; // この範囲は「不確か」→自動再生しない
+
+  // 探索候補として残す最低standingスコア。
+  // これは最終判定しきい値とは別。探索段階で候補を消しすぎないため0.50を維持。
+  const SEARCH_CANDIDATE_TH = 0.50;
+
+  // standingThreshold（初期65%）以上なら「立っている」。
+  // 35%以下なら「倒れている」。
+  // その間は前回判定を維持し、自動モードでは「不確か」として自動確定しない。
+  const FALLEN_TH = 0.35;
+
   let detecting = false;
 
   async function runDetection(){
@@ -2040,7 +2165,7 @@
       const assigned = new Array(10).fill(null);
       const used = [];
       cands.slice().sort((a, b) => b.score - a.score).forEach(c => {
-        if(assigned[c.pin] !== null || c.score < STAND_TH) return;
+        if(assigned[c.pin] !== null || c.score < SEARCH_CANDIDATE_TH) return;
         if(used.some(u => Math.hypot(u.cx - c.cx, u.cy - c.cy) < radius)) return;
         assigned[c.pin] = c.score;
         used.push(c);
@@ -2062,11 +2187,24 @@
         if(h.length > HISTORY_LEN) h.shift();
         const avg = h.reduce((a, b) => a + b, 0) / h.length;
 
+        // デバッグ表示用に、5回平均したstanding信頼度を保存する。
+        lastStandingScores[i] = avg;
+
         let st;
-        if(avg >= HYS_HI) st = true;
-        else if(avg <= HYS_LO) st = false;
-        else st = (lastStates ? lastStates[i] : avg >= 0.5); // 迷う範囲は前回を維持
-        const un = avg > UNC_LO && avg < UNC_HI;
+        if(avg >= standingThreshold){
+          st = true;
+        }else if(avg <= FALLEN_TH){
+          st = false;
+        }else{
+          // 35%〜設定しきい値の間は迷っている状態。
+          // 急なチラつきを避けるため前回判定を維持する。
+          st = (lastStates ? lastStates[i] : avg >= 0.5);
+        }
+
+        // 迷い範囲は「不確か」としてオレンジ表示。
+        // 自動モードでは、このピンが1本でもある間は自動確定しない。
+        const un = avg > FALLEN_TH && avg < standingThreshold;
+
         if(un) uncertainCount++;
         states.push(st);
         uncertainFlags.push(un);
@@ -2080,7 +2218,7 @@
     }
     detecting = false;
   }
-  setInterval(runDetection, 500);
+  setInterval(runDetection, 1000); // 軽量化のため1秒おきに判定
 
   // ===== 学習用画像の記録(Teachable Machineにアップロードする用) =====
   const trainData = { standing: [], fallen: [] };
