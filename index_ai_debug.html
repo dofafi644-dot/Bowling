@@ -197,6 +197,31 @@
     border:2px solid rgba(255,255,255,0.3);
     box-shadow:0 6px 18px rgba(0,0,0,0.55);
   }
+  /* 表示だけを中央拡大し、親のoverflow:hiddenでクロップする。
+     元のvideoWidth/videoHeightとAI入力には手を加えない。 */
+  #camFeed, #calibVideo{
+    transform:scale(var(--camera-zoom, 1));
+    transform-origin:50% 50%;
+  }
+  .camera-column{ min-width:0; }
+  .zoom-control{
+    display:flex; align-items:center; flex-wrap:wrap; gap:0.5rem;
+    width:100%; padding:0.6rem 0; font-size:0.95rem;
+  }
+  .zoom-control input[type="range"]{
+    flex:1; min-width:120px; min-height:44px; margin:0;
+    accent-color:var(--gold);
+  }
+  .zoom-control output{ min-width:3.2rem; font-weight:800; }
+  .zoom-control button{
+    min-height:44px; padding:0.4rem 0.7rem; border-radius:8px;
+    border:2px solid #fff; background:#1d2230; color:#fff;
+    font:inherit; cursor:pointer;
+  }
+  .calib-zoom{ width:min(92vw, 900px); flex-shrink:0; }
+  .calib-frame{ flex-shrink:0; }
+  #calibOverlay{ overflow-y:auto; }
+  .zoom-note{ font-size:0.85rem; color:#cbd5e1; margin:0 0 0.4rem; }
   #camFeed{
     width:100%; height:100%;
     object-fit:contain;
@@ -831,7 +856,8 @@
     </div>
   </div>
 
-  <!-- 右:カメラ -->
+  <!-- 右:カメラ。ズーム操作は映像の外に置き、iPadでも映像を見ながら調整できる。 -->
+  <div class="camera-column">
   <div class="camera-panel">
     <video id="camFeed" autoplay muted playsinline></video>
     <div class="cam-placeholder" id="camPlaceholder">
@@ -849,6 +875,14 @@
       <button id="camResetBtn" class="cam-icon-btn" type="button" title="ゲームをリセット">リセット</button>
       <button id="camSettingsBtn" class="cam-icon-btn" type="button" title="カメラ設定">⚙</button>
     </div>
+  </div>
+    <div class="zoom-control ">
+      <label for="cameraZoomSlider">カメラズーム</label>
+      <input id="cameraZoomSlider" data-camera-zoom type="range" min="1" max="3" step="0.1" value="1" aria-describedby="cameraZoomNote">
+      <output for="cameraZoomSlider" data-camera-zoom-value>1.0×</output>
+      <button type="button" data-camera-zoom-reset>1.0×に戻す</button>
+    </div>
+    <p class="zoom-note" id="cameraZoomNote">中央を拡大表示します。AIは画面外も含む設定済みの10本を判定します。</p>
   </div>
 </div>
 
@@ -901,6 +935,16 @@
   <h2>カメラを選択</h2>
   <div class="cam-overlay-note">iPhoneをUSBカメラ化するアプリ(Camo / iVCam / EpocCam等)を使っている場合、そのカメラ名を選んでください。</div>
   <select id="camSelect"></select>
+
+  <div class="settings-section">
+    <div class="zoom-control ">
+      <label for="settingsZoomSlider">カメラズーム</label>
+      <input id="settingsZoomSlider" data-camera-zoom type="range" min="1" max="3" step="0.1" value="1" aria-describedby="cameraZoomNote">
+      <output for="settingsZoomSlider" data-camera-zoom-value>1.0×</output>
+      <button type="button" data-camera-zoom-reset>1.0×に戻す</button>
+    </div>
+    <div class="cam-overlay-note">表示倍率だけが変わります。AIの切り出しサイズ・ピン位置は維持されます。10本が見える倍率で位置を設定してください。</div>
+  </div>
 
   <div id="calibStatusText">ピン位置: 未設定</div>
   <div class="confirm-buttons">
@@ -956,6 +1000,12 @@
     <video id="calibVideo" autoplay muted playsinline></video>
     <canvas id="calibCanvas"></canvas>
   </div>
+  <div class="zoom-control calib-zoom">
+      <label for="calibZoomSlider">カメラズーム</label>
+      <input id="calibZoomSlider" data-camera-zoom type="range" min="1" max="3" step="0.1" value="1" aria-describedby="cameraZoomNote">
+      <output for="calibZoomSlider" data-camera-zoom-value>1.0×</output>
+      <button type="button" data-camera-zoom-reset>1.0×に戻す</button>
+    </div>
   <div class="calib-text" id="calibText">1本目のピンの位置をタップしてください(1/10)</div>
   <div class="confirm-buttons">
     <button id="calibUndoBtn" type="button">1つ戻す</button>
@@ -1749,30 +1799,61 @@
   }
   updateCalibStatusText();
 
-  // クリック位置を、映像フレーム内の相対座標(0〜1)に変換する
-  // (object-fit:contain の余白/レターボックス分を差し引いて計算)
-  function videoClickToNormalized(clientX, clientY, videoEl, boundsEl){
+  // ===== 表示専用ズーム（2026/10/02） =====
+  // 保存座標は常に「元映像全体」の0〜1。旧bowlingPinPositionsもそのまま使う。
+  // ズームはvideo要素のcontain表示を中央から拡大して親でクロップするだけ。
+  // AI/学習画像のdrawCropは元映像を参照するため、倍率変更で入力や履歴は変わらない。
+  const zoomSliders = Array.from(document.querySelectorAll('[data-camera-zoom]'));
+  const zoomValues = Array.from(document.querySelectorAll('[data-camera-zoom-value]'));
+  let cameraZoom = 1;
+  try{
+    const savedZoom = Number(localStorage.getItem('bowlingCameraZoom'));
+    if(Number.isFinite(savedZoom) && savedZoom >= 1 && savedZoom <= 3){
+      cameraZoom = Math.round(savedZoom * 10) / 10;
+    }
+  }catch(e){ /* 保存できない環境でも、表示ズーム自体は使用できる。 */ }
+
+  function applyCameraZoom(value, persist){
+    const n = Number(value);
+    cameraZoom = Number.isFinite(n) ? Math.round(Math.max(1, Math.min(3, n)) * 10) / 10 : 1;
+    document.documentElement.style.setProperty('--camera-zoom', String(cameraZoom));
+    zoomSliders.forEach(el => {
+      el.value = String(cameraZoom);
+      el.setAttribute('aria-valuetext', cameraZoom.toFixed(1) + '倍');
+    });
+    zoomValues.forEach(el => { el.textContent = cameraZoom.toFixed(1) + '×'; });
+    if(persist){
+      try{ localStorage.setItem('bowlingCameraZoom', String(cameraZoom)); }catch(e){}
+    }
+    if(calibOverlay.classList.contains('show')) redrawCalibMarks();
+  }
+  zoomSliders.forEach(el => el.addEventListener('input', () => applyCameraZoom(el.value, true)));
+  document.querySelectorAll('[data-camera-zoom-reset]').forEach(el =>
+    el.addEventListener('click', () => applyCameraZoom(1, true)));
+  applyCameraZoom(cameraZoom, false);
+
+  // containの余白とCSS中央拡大を一か所で計算する。
+  // タップの逆変換とマーカーの正変換に同じ寸法を使い、縦横比や回転によるずれを防ぐ。
+  function getVideoDisplayGeometry(videoEl, boundsEl){
     const rect = boundsEl.getBoundingClientRect();
     const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
-    if(!vw || !vh) return null;
-    const boxRatio = rect.width / rect.height;
-    const vidRatio = vw / vh;
-    let dispW, dispH, offX, offY;
-    if(boxRatio > vidRatio){
-      dispH = rect.height;
-      dispW = dispH * vidRatio;
-      offX = (rect.width - dispW) / 2;
-      offY = 0;
-    }else{
-      dispW = rect.width;
-      dispH = dispW / vidRatio;
-      offX = 0;
-      offY = (rect.height - dispH) / 2;
-    }
-    const x = clientX - rect.left - offX;
-    const y = clientY - rect.top - offY;
-    if(x < 0 || y < 0 || x > dispW || y > dispH) return null;
-    return { x: x / dispW, y: y / dispH };
+    if(!vw || !vh || !rect.width || !rect.height) return null;
+    const scale = Math.min(rect.width / vw, rect.height / vh) * cameraZoom;
+    const width = vw * scale, height = vh * scale;
+    return { rect, width, height,
+      offX: (rect.width - width) / 2, offY: (rect.height - height) / 2 };
+  }
+
+  // 拡大画面のタップを元映像の相対座標に戻す。黒い余白はピン位置として登録しない。
+  function videoClickToNormalized(clientX, clientY, videoEl, boundsEl){
+    const g = getVideoDisplayGeometry(videoEl, boundsEl);
+    if(!g) return null;
+    const localX = clientX - g.rect.left, localY = clientY - g.rect.top;
+    if(localX < 0 || localY < 0 || localX > g.rect.width || localY > g.rect.height) return null;
+    const x = (localX - g.offX) / g.width;
+    const y = (localY - g.offY) / g.height;
+    if(x < 0 || y < 0 || x > 1 || y > 1) return null;
+    return { x, y };
   }
 
   function redrawCalibMarks(){
@@ -1780,9 +1861,13 @@
     calibCanvas.width = calibCanvas.clientWidth;
     calibCanvas.height = calibCanvas.clientHeight;
     ctx.clearRect(0, 0, calibCanvas.width, calibCanvas.height);
+    const g = getVideoDisplayGeometry(calibVideo, calibCanvas);
+    if(!g) return;
     calibPoints.forEach((p, i) => {
-      const x = p.x * calibCanvas.width;
-      const y = p.y * calibCanvas.height;
+      // 元映像座標→拡大表示座標。枠外のピンは描かず、保存位置は維持する。
+      const x = g.offX + p.x * g.width;
+      const y = g.offY + p.y * g.height;
+      if(x < 0 || y < 0 || x > calibCanvas.width || y > calibCanvas.height) return;
       ctx.beginPath();
       ctx.arc(x, y, 13, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255,210,74,0.85)';
@@ -1796,6 +1881,18 @@
       ctx.textBaseline = 'middle';
       ctx.fillText(String(i + 1), x, y);
     });
+  }
+
+  // iPadの回転、画面サイズ変更、メタデータ取得後にもマーカーを再配置する。
+  function refreshCalibGeometry(){
+    if(calibOverlay.classList.contains('show')) redrawCalibMarks();
+  }
+  calibVideo.addEventListener('loadedmetadata', refreshCalibGeometry);
+  calibVideo.addEventListener('resize', refreshCalibGeometry);
+  window.addEventListener('resize', refreshCalibGeometry);
+  if(typeof ResizeObserver !== 'undefined'){
+    const calibResizeObserver = new ResizeObserver(refreshCalibGeometry);
+    calibResizeObserver.observe(calibCanvas.parentElement);
   }
 
   function calibStepText(){
@@ -1885,6 +1982,8 @@
     updateStrip();
   });
 
+  // pはズーム前の元映像座標。表示倍率をここへ掛けるとAI入力が変わってしまう。
+  // 判定・信頼度プレビュー・学習用画像が共通でこの関数を使う。
   function drawCrop(cv, p){
     const vw = camFeed.videoWidth, vh = camFeed.videoHeight;
     if(!vw || !vh) return false;
